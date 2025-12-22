@@ -4,7 +4,7 @@ import os
 
 st.set_page_config(page_title="評分問卷", layout="centered")
 
-# --- 定義與 Dashboard 一致的標準 ---
+# --- 評分標準 (需與主程式一致) ---
 RUBRIC = {
     "一、臨床卓越與安全性 (35%)": [
         ("1. 模型準確度與臨床一致性", 14.0),
@@ -66,7 +66,7 @@ if submitted:
         
         vote_record["Total Score"] = total_weighted_score
         
-        # 寫入 CSV
+        # 寫入 CSV (使用 append 模式)
         df_new = pd.DataFrame([vote_record])
         if not os.path.exists(FILE_NAME):
             df_new.to_csv(FILE_NAME, index=False)
