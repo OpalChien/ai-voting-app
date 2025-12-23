@@ -4,6 +4,7 @@ import os
 import time
 import altair as alt
 from datetime import datetime
+import urllib.parse
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評估", layout="wide")
@@ -38,18 +39,32 @@ FILE_NAME = "vote_data_v2.csv"
 
 def render_voting_page():
     """ 顯示投票介面 """
-    query_params = st.query_params
-    project_name = query_params.get("project", "預設專案")
+    # 修正：使用更穩定的方式抓取參數
+    try:
+        query_params = st.query_params
+        # 優先嘗試抓取 project，若無則顯示警示
+        project_name = query_params.get("project", None)
+    except:
+        project_name = None
 
-    st.header(f"📝 評分表決：{project_name}")
+    # 如果抓不到專案名稱 (代表使用者可能直接開網頁沒掃碼)
+    if not project_name:
+        st.warning("⚠️ 警告：未偵測到專案名稱，請重新掃描大螢幕上的 QR Code。")
+        project_name = st.text_input("或請手動輸入專案名稱：")
+        if not project_name:
+            st.stop() # 停止執行，直到有名稱為止
+
+    st.markdown(f"### 📝 正在評估：**{project_name}**")
+    st.markdown("---")
     st.markdown("請針對各項目給予 **0 ~ 100** 分 (每 5 分為一個級距)。")
-    st.info("💡 系統會自動採計您的**最新一次**評分 (同姓名覆蓋)。")
+    st.caption("💡 系統採計邏輯：若重複提交，將自動覆蓋舊分數 (以最新一次為主)。")
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="例如：王醫師")
     
     user_scores = {}
     current_total_score = 0
     
+    # 建立評分區塊
     for category, criteria_list in RUBRIC.items():
         st.subheader(category)
         for criterion, weight in criteria_list:
@@ -88,7 +103,7 @@ def render_voting_page():
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
             vote_record = {
-                "Project": project_name, 
+                "Project": project_name, # 確保寫入的是抓到的專案名
                 "Voter": voter_name,
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -104,45 +119,98 @@ def render_voting_page():
                     df_new.to_csv(FILE_NAME, index=False)
                 else:
                     df_new.to_csv(FILE_NAME, mode='a', header=False, index=False)
-                st.success(f"✅ {voter_name} 的評分已送出！(專案：{project_name})")
+                st.success(f"✅ {voter_name} 的評分已送出！")
+                st.info(f"歸檔專案：{project_name}")
                 st.balloons()
                 time.sleep(2)
             except Exception as e:
                 st.error(f"寫入失敗，請重試: {e}")
 
+def get_existing_projects():
+    """ 從 CSV 讀取已存在的專案列表 """
+    if os.path.exists(FILE_NAME):
+        try:
+            df = pd.read_csv(FILE_NAME)
+            if "Project" in df.columns:
+                # 取得唯一值並轉為列表，過濾掉 nan
+                projects = df["Project"].dropna().unique().tolist()
+                return sorted(projects)
+        except:
+            return []
+    return []
+
 def render_dashboard_page():
     """ 顯示大螢幕儀表板 """
-    # 顯示最後更新時間，確保畫面有在動
-    st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
-    st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
     
-    # --- 側邊欄 ---
+    # 初始化 Session State (用來記住現在選的是哪個專案)
+    if "current_project" not in st.session_state:
+        st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
+
+    # --- 側邊欄：專案管理中心 ---
     with st.sidebar:
-        st.header("⚙️ 控制台")
-        st.subheader("📁 當前顯示專案")
-        # 這裡輸入什麼，大螢幕就顯示什麼
-        project_name = st.text_input("專案名稱", value="專案 A")
+        st.header("⚙️ 專案管理控制台")
         
+        # 1. 取得現有專案列表
+        existing_projects = get_existing_projects()
+        
+        # 2. 專案選擇模式
+        tab1, tab2 = st.tabs(["📂 選擇舊專案", "➕ 新增專案"])
+        
+        with tab1:
+            if existing_projects:
+                selected_proj = st.selectbox(
+                    "請選擇要顯示的專案：", 
+                    existing_projects,
+                    index=0 if existing_projects else None
+                )
+                if selected_proj:
+                    st.session_state["current_project"] = selected_proj
+            else:
+                st.caption("目前尚無任何專案紀錄。")
+
+        with tab2:
+            new_proj_name = st.text_input("輸入新專案名稱：", placeholder="例如：胸腔 X 光 AI")
+            if st.button("建立並切換"):
+                if new_proj_name:
+                    st.session_state["current_project"] = new_proj_name
+                    st.success(f"已切換至新專案：{new_proj_name}")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("請輸入名稱")
+
         st.divider()
+        st.info(f"📌 目前鎖定專案：\n\n**{st.session_state['current_project']}**")
+        st.divider()
+
+        # 3. 網址設定
         default_url = "https://shinkong-ai-vote.streamlit.app" 
         base_url = st.text_input("App 主網址", value=default_url)
         
-        import urllib.parse
-        safe_project_name = urllib.parse.quote(project_name)
-        vote_link = f"{base_url}/?page=vote&project={safe_project_name}"
+        # 產生帶有 Project 參數的連結 (做 URL 編碼處理特殊字元)
+        project_param = urllib.parse.quote(st.session_state["current_project"])
+        vote_link = f"{base_url}/?page=vote&project={project_param}"
         
-        st.divider()
-        if st.button("🔄 手動刷新"):
+        if st.button("🔄 手動刷新數據"):
             st.rerun()
 
     # --- Dashboard 主畫面 ---
+    
+    # 標題區
+    st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
+    st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
+
+    current_proj = st.session_state["current_project"]
+
+    # QR Code 與連結區
     col_qr, col_info = st.columns([1, 4])
     with col_qr:
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={vote_link}"
-        st.image(qr_url, caption=f"掃碼評分：{project_name}")
+        st.image(qr_url, caption=f"專案：{current_proj}")
     with col_info:
-        st.info(f"💡 目前正在進行 **【{project_name}】** 的評分")
-        st.markdown(f"**投票連結：** `{vote_link}`")
+        st.info(f"📢 目前正在進行 **【{current_proj}】** 的評分")
+        st.markdown(f"請評審掃描左側 QR Code，連結已包含專案參數。")
+        st.code(vote_link)
 
     st.divider()
 
@@ -151,19 +219,21 @@ def render_dashboard_page():
     if os.path.exists(FILE_NAME):
         try:
             df_all = pd.read_csv(FILE_NAME)
-            # 欄位補全防呆
-            if "Project" not in df_all.columns: df_all["Project"] = "預設專案"
+            # 欄位補全
+            if "Project" not in df_all.columns: df_all["Project"] = "Default"
             if "Timestamp" not in df_all.columns: df_all["Timestamp"] = "2024-01-01 00:00:00"
         except:
-            pass # 讀取失敗可能是正在寫入，略過本次刷新
+            pass 
 
-    # --- 第一部分：當前專案分析 ---
+    # --- 當前專案分析 ---
+    has_data = False
     if not df_all.empty:
-        # 篩選當前專案
-        df_project = df_all[df_all["Project"] == project_name].copy()
+        # 篩選
+        df_project = df_all[df_all["Project"] == current_proj].copy()
         
         if not df_project.empty:
-            # 取最新一筆 (覆蓋邏輯)
+            has_data = True
+            # 取最新 (覆蓋邏輯)
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             
             # KPI
@@ -231,44 +301,31 @@ def render_dashboard_page():
             # 詳細與下載
             st.divider()
             with st.expander("📂 查看與下載詳細數據", expanded=False):
-                st.markdown(f"### 【{project_name}】最終採計結果")
+                st.markdown(f"### 【{current_proj}】最終採計結果")
                 st.dataframe(df_clean)
                 csv = df_clean.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(label="📥 下載 Excel", data=csv, file_name=f'{project_name}_result.csv', mime='text/csv')
+                st.download_button(label="📥 下載 Excel", data=csv, file_name=f'{current_proj}_result.csv', mime='text/csv')
 
-        else:
-            st.warning(f"專案【{project_name}】目前沒有資料。")
-            
-    else:
-        st.warning("目前尚無任何投票資料。")
+    if not has_data:
+        st.warning(f"專案【{current_proj}】目前尚無資料，請評委掃碼開始投票。")
 
-    # --- 第二部分：歷史專案總覽 (反查功能) ---
+    # --- 歷史專案列表 (反查功能) ---
     st.divider()
-    st.markdown("### 🗂️ 歷史專案總覽 (所有已存檔紀錄)")
-    
+    st.markdown("### 🗂️ 專案資料庫總覽")
     if not df_all.empty and "Project" in df_all.columns:
-        # 製作總表：顯示每個專案有多少人投、平均幾分
-        # 先做去重處理，確保統計的是有效票數
         df_all_clean = df_all.sort_values("Timestamp").drop_duplicates(subset=["Project", "Voter"], keep="last")
-        
         history_summary = df_all_clean.groupby("Project").agg(
             有效票數=('Voter', 'count'),
             平均總分=('Total Score', 'mean'),
             最後更新時間=('Timestamp', 'max')
         ).reset_index()
-        
-        # 格式化小數點
         history_summary["平均總分"] = history_summary["平均總分"].round(1)
-        
         st.dataframe(history_summary, use_container_width=True)
-        st.caption("💡 提示：若要在上方儀表板顯示特定專案，請將該專案名稱複製到左側側邊欄的「專案名稱」欄位中。")
 
-        # 全域下載按鈕
-        with st.expander("📥 下載所有專案完整原始檔"):
+        with st.expander("📥 下載所有專案原始檔"):
             csv_all = df_all.to_csv(index=False).encode('utf-8-sig')
             st.download_button(label="下載完整備份 (All Projects)", data=csv_all, file_name='all_votes_backup.csv', mime='text/csv')
 
-    # 強制自動刷新 (每 5 秒)
     time.sleep(5)
     st.rerun()
 
