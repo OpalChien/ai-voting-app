@@ -43,7 +43,6 @@ def get_existing_projects():
         try:
             df = pd.read_csv(FILE_NAME)
             if "Project" in df.columns:
-                # 取得唯一值並轉為列表，過濾掉 nan
                 projects = df["Project"].dropna().unique().tolist()
                 return sorted(projects)
         except:
@@ -60,23 +59,22 @@ def render_voting_page():
     except:
         project_name = None
 
-    # 強制檢查專案名稱
     if not project_name:
-        st.warning("⚠️ 警告：未偵測到專案名稱，請確認您的網址是否完整，或重新掃描 QR Code。")
+        st.warning("⚠️ 警告：未偵測到專案名稱，請重新掃描 QR Code。")
         project_name = st.text_input("或請手動輸入專案名稱：")
         if not project_name:
             st.stop()
 
     st.markdown(f"### 📝 正在評估：**{project_name}**")
     st.markdown("---")
-    st.markdown("請針對各項目給予 **0 ~ 100** 分 (每 5 分為一個級距)。")
-    st.caption("💡 系統採計邏輯：若重複提交，將自動覆蓋舊分數 (以最新一次為主)。")
+    st.caption("💡 說明：若重複提交，系統將自動覆蓋您的舊分數 (以最新一次為主)。")
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="例如：王醫師")
     
     user_scores = {}
     current_total_score = 0
     
+    # 評分區塊
     for category, criteria_list in RUBRIC.items():
         st.subheader(category)
         for criterion, weight in criteria_list:
@@ -95,6 +93,7 @@ def render_voting_page():
 
     st.divider()
     
+    # 顯示總分
     st.markdown("### 🏆 您目前的評分總計")
     score_color = "red"
     if current_total_score >= 75: score_color = "green"
@@ -110,6 +109,7 @@ def render_voting_page():
 
     feedback = st.text_area("💬 意見回饋 / 備註 (選填)", placeholder="請輸入您對此案的具體建議...")
 
+    # 提交區
     if st.button("🚀 確認提交評分", type="primary", use_container_width=True):
         if not voter_name:
             st.error("❌ 請輸入您的姓名後再提交！")
@@ -131,9 +131,12 @@ def render_voting_page():
                     df_new.to_csv(FILE_NAME, index=False)
                 else:
                     df_new.to_csv(FILE_NAME, mode='a', header=False, index=False)
+                
                 st.success(f"✅ {voter_name} 的評分已送出！")
                 st.balloons()
                 time.sleep(2)
+                # 提交後強制重整，清除狀態，避免手機端亂跳
+                st.rerun() 
             except Exception as e:
                 st.error(f"寫入失敗: {e}")
 
@@ -145,22 +148,17 @@ def render_dashboard_page():
 
     # --- 側邊欄 ---
     with st.sidebar:
-        st.header("🗂️ 專案列表")
+        st.header("🗂️ 專案管理")
         
-        # 1. 取得現有專案
+        # 1. 專案選擇
         existing_projects = get_existing_projects()
         current_proj = st.session_state["current_project"]
 
-        # 【關鍵修復】
-        # 如果當前專案是新建立的（還不在 CSV 裡），我們手動把它加到選項列表裡
-        # 這樣 Radio Button 就不會因為找不到選項而報錯或卡住
         display_options = existing_projects.copy()
         if current_proj and current_proj not in display_options:
             display_options.append(current_proj)
         
-        # 確保有選項可選
         if display_options:
-            # 找出當前專案在列表中的位置
             try:
                 current_index = display_options.index(current_proj)
             except:
@@ -173,7 +171,6 @@ def render_dashboard_page():
                 key="project_selector"
             )
             
-            # 切換邏輯
             if selected_proj != st.session_state["current_project"]:
                 st.session_state["current_project"] = selected_proj
                 st.rerun()
@@ -182,61 +179,63 @@ def render_dashboard_page():
 
         st.markdown("---")
         
-        st.subheader("➕ 新增評估專案")
+        # 2. 新增專案
+        st.subheader("➕ 新增專案")
         with st.form("create_project_form"):
-            new_proj_name = st.text_input("輸入新專案名稱", placeholder="例如：胸腔 X 光 AI")
-            if st.form_submit_button("建立並切換"):
+            new_proj_name = st.text_input("新專案名稱", placeholder="例如：胸腔 X 光 AI")
+            if st.form_submit_button("建立"):
                 if new_proj_name:
                     st.session_state["current_project"] = new_proj_name
-                    st.success(f"已切換至新專案：{new_proj_name}")
+                    st.success(f"已切換：{new_proj_name}")
                     time.sleep(0.5)
                     st.rerun()
-                else:
-                    st.error("名稱不能為空")
 
         st.markdown("---")
         
-        with st.expander("🛠️ 進階設定 (網址/清除)"):
-            default_url = "https://shinkong-ai-vote.streamlit.app" 
-            base_url_input = st.text_input("App 主網址", value=default_url)
-            base_url = base_url_input.rstrip("/") 
-            
-            st.divider()
-            st.warning("🗑️ 危險區域")
+        # 3. 自動刷新開關 (解決亂跳問題的核心)
+        st.subheader("⚙️ 顯示設定")
+        auto_refresh = st.toggle("🔄 開啟自動刷新 (Live)", value=True, help="開啟時每 5 秒更新一次數據。若要查看下方明細或下載檔案，建議【關閉】此功能以免畫面跳動。")
+        
+        st.divider()
+        
+        # 4. 危險區
+        with st.expander("🗑️ 危險區域"):
             if st.button("清除所有資料", type="primary"):
                 if os.path.exists(FILE_NAME):
                     os.remove(FILE_NAME)
                     st.session_state["current_project"] = None
-                    st.success("資料已清空！")
+                    st.success("已清空！")
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.warning("無資料可清")
 
     # --- Dashboard 主畫面 ---
     
-    st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
+    # 顯示狀態列 (讓你知道有沒有在刷新)
+    last_update = datetime.now().strftime('%H:%M:%S')
+    status_text = f"🟢 Live 更新中 ({last_update})" if auto_refresh else "🔴 已暫停更新 (靜止模式)"
+    st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>{status_text}</div>", unsafe_allow_html=True)
+    
     st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
 
     current_proj = st.session_state["current_project"]
 
     if not current_proj:
-        st.info("👋 歡迎使用！請在左側 **「新增評估專案」** 或 **「點選現有專案」** 開始使用。")
+        st.info("👋 請在左側建立或選擇一個專案。")
         st.stop()
 
-    # QR Code 生成
-    project_param = urllib.parse.quote(current_proj)
-    vote_link = f"{base_url}/?page=vote&project={project_param}"
+    # QR Code
+    default_url = "https://shinkong-ai-vote.streamlit.app"
+    # 這裡可以用 st.text_input 讓使用者改，但為了畫面乾淨先寫死，需要可再加回
+    vote_link = f"{default_url}/?page=vote&project={urllib.parse.quote(current_proj)}"
     encoded_vote_link = urllib.parse.quote(vote_link)
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={encoded_vote_link}"
 
     col_qr, col_info = st.columns([1, 4])
     with col_qr:
-        st.image(qr_url, caption=f"專案：{current_proj}")
+        st.image(qr_url, caption=f"{current_proj}")
     with col_info:
         st.info(f"📢 目前正在進行 **【{current_proj}】** 的評分")
-        st.markdown(f"請評審掃描左側 QR Code。")
-        st.caption(f"連結預覽：{vote_link}")
+        st.code(vote_link)
 
     st.divider()
 
@@ -250,7 +249,6 @@ def render_dashboard_page():
         except:
             pass 
 
-    # --- 當前專案分析 ---
     has_data = False
     if not df_all.empty:
         df_project = df_all[df_all["Project"] == current_proj].copy()
@@ -258,15 +256,11 @@ def render_dashboard_page():
         if not df_project.empty:
             has_data = True
             
-            # --- 核心邏輯：區分「最新資料」與「完整歷史」 ---
-            
-            # 1. 完整歷史 (History): 用於 Audit
+            # 分離 Clean 與 History
             df_history = df_project.sort_values("Timestamp", ascending=False)
-            
-            # 2. 最新資料 (Clean): 用於圖表計算
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             
-            # --- 圖表區 (使用 df_clean) ---
+            # --- 統計區 ---
             avg = df_clean["Total Score"].mean()
             c1, c2, c3 = st.columns(3)
             c1.metric("📥 已投票人數", f"{len(df_clean)} 人")
@@ -279,7 +273,7 @@ def render_dashboard_page():
             
             st.divider()
 
-            # 圓餅圖
+            # --- 圖表區 ---
             st.subheader("🗳️ 投票結果分布")
             def classify_score(s):
                 if s >= 75: return "推薦引進"
@@ -306,7 +300,6 @@ def render_dashboard_page():
             )
             st.altair_chart(pie + text, use_container_width=True)
 
-            # 橫向長條圖 (細項)
             st.subheader("📈 各構面達成率細項")
             cat_data = []
             for cat, criteria in RUBRIC.items():
@@ -328,30 +321,32 @@ def render_dashboard_page():
             text_chart = bar_chart.mark_text(align='left', baseline='middle', dx=3, fontSize=14).encode(text='達成率 (%)')
             st.altair_chart(bar_chart + text_chart, use_container_width=True)
 
-            # --- 詳細與下載區 (【重點修正】：分頁顯示歷史) ---
+            # --- 詳細資料區 ---
             st.divider()
-            with st.expander("📂 查看與下載詳細數據 (含完整歷史)", expanded=False):
-                
+            st.markdown("### 📂 詳細數據區")
+            if auto_refresh:
+                st.info("⚠️ 提示：若要仔細查看或下載下方表格，建議先**關閉左側的自動刷新**，以免畫面跳動。")
+            
+            with st.expander("點擊展開數據表格", expanded=False):
                 tab1, tab2 = st.tabs(["📊 最終採計結果 (Clean)", "🕒 完整修改歷程 (History)"])
                 
                 with tab1:
-                    st.caption("此處僅顯示每位評審的「最新」一次投票，用於計算最終分數。")
                     st.dataframe(df_clean)
                     csv_clean = df_clean.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(label="📥 下載最終結果 (Excel)", data=csv_clean, file_name=f'{current_proj}_final.csv', mime='text/csv')
+                    st.download_button("📥 下載 Excel (最終結果)", csv_clean, f'{current_proj}_final.csv', 'text/csv')
                 
                 with tab2:
-                    st.caption("此處顯示「所有」提交紀錄，包含被修正覆蓋的舊分數，可依時間追蹤。")
-                    # 顯示完整歷史 df_history
                     st.dataframe(df_history)
                     csv_history = df_history.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(label="📥 下載完整歷程 (Excel)", data=csv_history, file_name=f'{current_proj}_history.csv', mime='text/csv')
+                    st.download_button("📥 下載 Excel (完整歷程)", csv_history, f'{current_proj}_history.csv', 'text/csv')
 
     if not has_data:
-        st.warning(f"專案【{current_proj}】目前尚無資料，請評委掃碼開始投票。")
+        st.warning(f"專案【{current_proj}】目前尚無資料。")
 
-    time.sleep(5)
-    st.rerun()
+    # 只有在開關打開時，才執行等待與刷新
+    if auto_refresh:
+        time.sleep(5)
+        st.rerun()
 
 # --- 5. 路由控制 ---
 query_params = st.query_params
