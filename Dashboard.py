@@ -140,82 +140,89 @@ def render_voting_page():
 def render_dashboard_page():
     """ 顯示大螢幕儀表板 """
     
-    # 確保 Session State 有初始值
+    # 確保 Session State 有初始值，預設為 None (不幫使用者亂選)
     if "current_project" not in st.session_state:
-        st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
+        st.session_state["current_project"] = None
 
-    # --- 側邊欄：專案管理中心 ---
+    # --- 側邊欄：專案清單 (分頁式) ---
     with st.sidebar:
-        st.header("⚙️ 專案管理")
+        st.header("🗂️ 專案列表")
         
-        # 1. 模式選擇 (使用 Radio Button 強制切換)
-        mode = st.radio("操作模式", ["📂 切換現有專案", "➕ 建立新專案"], index=0)
-        
+        # 1. 取得現有專案
         existing_projects = get_existing_projects()
-
-        if mode == "📂 切換現有專案":
-            if existing_projects:
-                # 這裡的邏輯是：選單改變 -> 更新 Session State
-                selected_proj = st.selectbox(
-                    "請選擇專案：", 
-                    existing_projects,
-                    index=existing_projects.index(st.session_state["current_project"]) if st.session_state["current_project"] in existing_projects else 0
-                )
-                # 強制更新
-                if selected_proj != st.session_state["current_project"]:
-                    st.session_state["current_project"] = selected_proj
-                    st.rerun() # 立即刷新頁面
-            else:
-                st.info("尚無歷史專案，請先建立新專案。")
-                st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
-
-        elif mode == "➕ 建立新專案":
-            new_proj_name = st.text_input("輸入新專案名稱：", placeholder="例如：胸腔 X 光 AI")
-            if st.button("建立並切換至此專案"):
-                if new_proj_name:
-                    st.session_state["current_project"] = new_proj_name
-                    st.success(f"已切換至：{new_proj_name}")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("請輸入名稱")
-
-        st.divider()
-        st.markdown(f"📌 當前鎖定：\n**{st.session_state['current_project']}**")
-        st.divider()
-
-        # 2. 網址與清除資料
-        default_url = "https://shinkong-ai-vote.streamlit.app" 
-        base_url = st.text_input("App 主網址", value=default_url)
         
-        # URL Encode
-        project_param = urllib.parse.quote(st.session_state["current_project"])
-        vote_link = f"{base_url}/?page=vote&project={project_param}"
-        
-        if st.button("🔄 手動刷新數據"):
-            st.rerun()
+        # 2. 顯示清單 (Radio Button 看起來像分頁)
+        if existing_projects:
+            # 判斷 index: 如果當前專案在列表裡，就預設選它，否則不選 (index=None 在新版 streamlit 支援，舊版用 0)
+            try:
+                current_index = existing_projects.index(st.session_state["current_project"])
+            except:
+                current_index = 0
+            
+            selected_proj = st.radio(
+                "點擊切換專案：",
+                existing_projects,
+                index=current_index,
+                key="project_selector" # 加入 key 方便辨識
+            )
+            
+            # 當使用者點擊 Radio Button，更新 Session State
+            if selected_proj != st.session_state["current_project"]:
+                st.session_state["current_project"] = selected_proj
+                st.rerun()
+        else:
+            st.info("尚無歷史專案，請在下方建立。")
 
         st.markdown("---")
-        # 3. 清除資料區 (Danger Zone)
-        with st.expander("🗑️ 危險區域 (清除資料)"):
-            st.warning("注意：這將刪除「所有專案」的 CSV 檔案，無法復原！")
-            if st.button("確認清除所有資料", type="primary"):
-                if os.path.exists(FILE_NAME):
-                    os.remove(FILE_NAME)
-                    st.success("所有資料已刪除！")
-                    # 重置專案名稱
-                    st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
-                    time.sleep(2)
+        
+        # 3. 新增專案區塊
+        st.subheader("➕ 新增評估專案")
+        with st.form("create_project_form"):
+            new_proj_name = st.text_input("輸入新專案名稱", placeholder="例如：胸腔 X 光 AI")
+            if st.form_submit_button("建立並切換"):
+                if new_proj_name:
+                    # 如果該專案已存在，直接切換；若不存在，設為當前專案 (等到有人投票才會寫入 CSV)
+                    st.session_state["current_project"] = new_proj_name
+                    st.success(f"已切換至新專案：{new_proj_name}")
+                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.warning("目前沒有資料檔可刪除。")
+                    st.error("名稱不能為空")
+
+        st.markdown("---")
+        
+        # 4. 其他設定
+        with st.expander("🛠️ 進階設定 (網址/清除)"):
+            default_url = "https://shinkong-ai-vote.streamlit.app" 
+            base_url = st.text_input("App 主網址", value=default_url)
+            
+            st.divider()
+            st.warning("🗑️ 危險區域")
+            if st.button("清除所有資料", type="primary"):
+                if os.path.exists(FILE_NAME):
+                    os.remove(FILE_NAME)
+                    st.session_state["current_project"] = None
+                    st.success("資料已清空！")
+                    time.sleep(1)
+                    st.rerun()
 
     # --- Dashboard 主畫面 ---
     
     st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
     st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
 
+    # 檢查是否有選擇專案
     current_proj = st.session_state["current_project"]
+
+    if not current_proj:
+        # 如果沒有選擇專案 (初始化狀態)
+        st.info("👋 歡迎使用！請在左側 **「新增評估專案」** 或 **「點選現有專案」** 開始使用。")
+        st.stop() # 停止渲染下方內容
+
+    # 產生連結
+    # URL Encode
+    project_param = urllib.parse.quote(current_proj)
+    vote_link = f"{base_url}/?page=vote&project={project_param}"
 
     # QR Code 與連結區
     col_qr, col_info = st.columns([1, 4])
@@ -323,23 +330,7 @@ def render_dashboard_page():
     if not has_data:
         st.warning(f"專案【{current_proj}】目前尚無資料，請評委掃碼開始投票。")
 
-    # --- 歷史專案列表 (反查功能) ---
-    st.divider()
-    st.markdown("### 🗂️ 專案資料庫總覽")
-    if not df_all.empty and "Project" in df_all.columns:
-        df_all_clean = df_all.sort_values("Timestamp").drop_duplicates(subset=["Project", "Voter"], keep="last")
-        history_summary = df_all_clean.groupby("Project").agg(
-            有效票數=('Voter', 'count'),
-            平均總分=('Total Score', 'mean'),
-            最後更新時間=('Timestamp', 'max')
-        ).reset_index()
-        history_summary["平均總分"] = history_summary["平均總分"].round(1)
-        st.dataframe(history_summary, use_container_width=True)
-
-        with st.expander("📥 下載所有專案完整原始檔"):
-            csv_all = df_all.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="下載完整備份 (All Projects)", data=csv_all, file_name='all_votes_backup.csv', mime='text/csv')
-
+    # 強制自動刷新 (每 5 秒)
     time.sleep(5)
     st.rerun()
 
