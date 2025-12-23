@@ -43,7 +43,6 @@ def get_existing_projects():
         try:
             df = pd.read_csv(FILE_NAME)
             if "Project" in df.columns:
-                # 取得唯一值並轉為列表，過濾掉 nan
                 projects = df["Project"].dropna().unique().tolist()
                 return sorted(projects)
         except:
@@ -62,7 +61,7 @@ def render_voting_page():
 
     # 強制檢查專案名稱
     if not project_name:
-        st.warning("⚠️ 警告：未偵測到專案名稱，請重新掃描大螢幕上的 QR Code。")
+        st.warning("⚠️ 警告：未偵測到專案名稱，請確認您的網址是否完整，或重新掃描 QR Code。")
         project_name = st.text_input("或請手動輸入專案名稱：")
         if not project_name:
             st.stop()
@@ -140,20 +139,16 @@ def render_voting_page():
 def render_dashboard_page():
     """ 顯示大螢幕儀表板 """
     
-    # 確保 Session State 有初始值，預設為 None (不幫使用者亂選)
     if "current_project" not in st.session_state:
         st.session_state["current_project"] = None
 
-    # --- 側邊欄：專案清單 (分頁式) ---
+    # --- 側邊欄 ---
     with st.sidebar:
         st.header("🗂️ 專案列表")
         
-        # 1. 取得現有專案
         existing_projects = get_existing_projects()
         
-        # 2. 顯示清單 (Radio Button 看起來像分頁)
         if existing_projects:
-            # 判斷 index: 如果當前專案在列表裡，就預設選它，否則不選 (index=None 在新版 streamlit 支援，舊版用 0)
             try:
                 current_index = existing_projects.index(st.session_state["current_project"])
             except:
@@ -163,10 +158,9 @@ def render_dashboard_page():
                 "點擊切換專案：",
                 existing_projects,
                 index=current_index,
-                key="project_selector" # 加入 key 方便辨識
+                key="project_selector"
             )
             
-            # 當使用者點擊 Radio Button，更新 Session State
             if selected_proj != st.session_state["current_project"]:
                 st.session_state["current_project"] = selected_proj
                 st.rerun()
@@ -175,13 +169,11 @@ def render_dashboard_page():
 
         st.markdown("---")
         
-        # 3. 新增專案區塊
         st.subheader("➕ 新增評估專案")
         with st.form("create_project_form"):
             new_proj_name = st.text_input("輸入新專案名稱", placeholder="例如：胸腔 X 光 AI")
             if st.form_submit_button("建立並切換"):
                 if new_proj_name:
-                    # 如果該專案已存在，直接切換；若不存在，設為當前專案 (等到有人投票才會寫入 CSV)
                     st.session_state["current_project"] = new_proj_name
                     st.success(f"已切換至新專案：{new_proj_name}")
                     time.sleep(0.5)
@@ -191,10 +183,11 @@ def render_dashboard_page():
 
         st.markdown("---")
         
-        # 4. 其他設定
         with st.expander("🛠️ 進階設定 (網址/清除)"):
             default_url = "https://shinkong-ai-vote.streamlit.app" 
-            base_url = st.text_input("App 主網址", value=default_url)
+            # 移除網址後面的斜線 (防呆)
+            base_url_input = st.text_input("App 主網址", value=default_url)
+            base_url = base_url_input.rstrip("/") 
             
             st.divider()
             st.warning("🗑️ 危險區域")
@@ -205,34 +198,42 @@ def render_dashboard_page():
                     st.success("資料已清空！")
                     time.sleep(1)
                     st.rerun()
+                else:
+                    st.warning("無資料可清")
 
     # --- Dashboard 主畫面 ---
     
     st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
     st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
 
-    # 檢查是否有選擇專案
     current_proj = st.session_state["current_project"]
 
     if not current_proj:
-        # 如果沒有選擇專案 (初始化狀態)
         st.info("👋 歡迎使用！請在左側 **「新增評估專案」** 或 **「點選現有專案」** 開始使用。")
-        st.stop() # 停止渲染下方內容
+        st.stop()
 
-    # 產生連結
-    # URL Encode
+    # --- 修正後的 QR Code 生成邏輯 ---
+    
+    # 1. 處理專案名稱 (URL Encode)
     project_param = urllib.parse.quote(current_proj)
+    
+    # 2. 組合完整的投票網址
     vote_link = f"{base_url}/?page=vote&project={project_param}"
+    
+    # 3. 【關鍵修正】將整個投票網址再 Encode 一次，因為它要被當作參數傳給 QR API
+    # 這樣 QR API 才會把 &project=... 當作網址的一部分，而不是 API 的參數
+    encoded_vote_link = urllib.parse.quote(vote_link)
+    
+    # 4. 生成最終 QR Code 圖片連結
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={encoded_vote_link}"
 
-    # QR Code 與連結區
     col_qr, col_info = st.columns([1, 4])
     with col_qr:
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={vote_link}"
         st.image(qr_url, caption=f"專案：{current_proj}")
     with col_info:
         st.info(f"📢 目前正在進行 **【{current_proj}】** 的評分")
-        st.markdown(f"請評審掃描左側 QR Code，連結已包含專案參數。")
-        st.code(vote_link)
+        st.markdown(f"請評審掃描左側 QR Code。")
+        st.caption(f"連結預覽：{vote_link}")
 
     st.divider()
 
@@ -249,15 +250,12 @@ def render_dashboard_page():
     # --- 當前專案分析 ---
     has_data = False
     if not df_all.empty:
-        # 篩選
         df_project = df_all[df_all["Project"] == current_proj].copy()
         
         if not df_project.empty:
             has_data = True
-            # 取最新 (覆蓋邏輯)
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             
-            # KPI
             avg = df_clean["Total Score"].mean()
             c1, c2, c3 = st.columns(3)
             c1.metric("📥 已投票人數", f"{len(df_clean)} 人")
