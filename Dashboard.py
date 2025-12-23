@@ -39,7 +39,7 @@ def render_voting_page():
     """ 顯示投票介面 """
     st.header("📝 AI 軟體評估表決")
     st.markdown("請針對各項目給予 **0 ~ 100** 分 (每 5 分為一個級距)。")
-    st.info("💡 若需修改分數，請使用**相同姓名**重新提交即可覆蓋舊資料。")
+    st.info(" 若需修改分數，請使用**相同姓名**重新提交即可覆蓋舊資料。")
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="例如：王醫師")
     
@@ -84,11 +84,11 @@ def render_voting_page():
     
     st.divider()
 
-    # 意見回饋
+    # 意見回饋 (依然讓評委填寫，但 Dashboard 不顯示)
     feedback = st.text_area("💬 意見回饋 / 備註 (選填)", placeholder="請輸入您對此案的具體建議...")
 
     # 提交按鈕
-    if st.button("🚀 確認提交評分", type="primary", use_container_width=True):
+    if st.button("確認提交評分", type="primary", use_container_width=True):
         if not voter_name:
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
@@ -121,7 +121,7 @@ def render_voting_page():
 
 def render_dashboard_page():
     """ 顯示大螢幕儀表板 """
-    st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
+    st.title("📊新光醫院 AI 軟體評估 - 決策看板")
     
     # 側邊欄控制
     with st.sidebar:
@@ -146,7 +146,7 @@ def render_dashboard_page():
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={vote_link}"
         st.image(qr_url, caption="掃碼投票")
     with col_info:
-        st.info("💡 請評審掃描左側 QR Code 進入評分頁面")
+        st.info(" 請評審掃描左側 QR Code 進入評分頁面")
         st.markdown(f"**投票連結：** `{vote_link}`")
 
     st.divider()
@@ -198,28 +198,45 @@ def render_dashboard_page():
                 )
                 st.altair_chart(pie + text, use_container_width=True)
 
-                # (已移除各構面長條圖)
+                # 3. 各構面詳細長條圖 (【加回來了！】)
+                st.subheader("📈 各構面達成率細項")
+                cat_data = []
+                for cat, criteria in RUBRIC.items():
+                    total_w = sum(w for c, w in criteria)
+                    cols = [c for c, w in criteria]
+                    if all(c in df.columns for c in cols):
+                        actual = df[cols].sum(axis=1).mean()
+                        pct = (actual / total_w) * 100
+                        short_name = cat.split(" ")[0] 
+                        cat_data.append({"構面": short_name, "達成率 (%)": round(pct, 1)})
+                
+                chart_df = pd.DataFrame(cat_data)
+                
+                bar_chart = alt.Chart(chart_df).mark_bar().encode(
+                    x=alt.X('達成率 (%)', scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y('構面', sort=None, axis=alt.Axis(labelFontSize=14)),
+                    color=alt.Color('達成率 (%)', scale=alt.Scale(scheme='blues'), legend=None),
+                    tooltip=['構面', '達成率 (%)']
+                ).properties(height=300)
 
-                # 3. 意見回饋區
-                st.subheader("💬 評委意見回饋")
-                if "Feedback" in df.columns:
-                    feedbacks = df[df["Feedback"].notna() & (df["Feedback"] != "")][["Voter", "Feedback"]]
-                    if not feedbacks.empty:
-                        for index, row in feedbacks.iterrows():
-                            st.info(f"**{row['Voter']}:** {row['Feedback']}")
-                    else:
-                        st.caption("目前尚無文字回饋。")
+                text_chart = bar_chart.mark_text(
+                    align='left', baseline='middle', dx=3, fontSize=14
+                ).encode(
+                    text='達成率 (%)'
+                )
+                
+                st.altair_chart(bar_chart + text_chart, use_container_width=True)
 
-                # 4. 詳細資料表 & 下載功能 (新增)
+                # (已移除評委意見回饋顯示區)
+
+                # 4. 詳細資料表 & 下載功能
                 st.divider()
-                with st.expander("📂 查看與下載詳細評分數據", expanded=False):
+                with st.expander(" 查看與下載詳細評分數據", expanded=False):
                     st.dataframe(df)
                     
-                    # 準備下載用的 CSV 格式 (為了讓 Excel 能讀取中文，使用 utf-8-sig 編碼)
                     csv = df.to_csv(index=False).encode('utf-8-sig')
-                    
                     st.download_button(
-                        label="📥 下載 Excel 報表 (CSV格式)",
+                        label=" 下載 Excel 報表 (CSV格式)",
                         data=csv,
                         file_name='新光醫院AI評估結果.csv',
                         mime='text/csv',
