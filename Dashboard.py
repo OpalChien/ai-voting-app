@@ -35,24 +35,37 @@ RUBRIC = {
 
 FILE_NAME = "vote_data_v2.csv"
 
-# --- 3. 定義功能函式 ---
+# --- 3. 輔助函式 ---
+
+def get_existing_projects():
+    """ 從 CSV 讀取已存在的專案列表 """
+    if os.path.exists(FILE_NAME):
+        try:
+            df = pd.read_csv(FILE_NAME)
+            if "Project" in df.columns:
+                # 取得唯一值並轉為列表，過濾掉 nan
+                projects = df["Project"].dropna().unique().tolist()
+                return sorted(projects)
+        except:
+            return []
+    return []
+
+# --- 4. 頁面渲染函式 ---
 
 def render_voting_page():
     """ 顯示投票介面 """
-    # 修正：使用更穩定的方式抓取參數
     try:
         query_params = st.query_params
-        # 優先嘗試抓取 project，若無則顯示警示
         project_name = query_params.get("project", None)
     except:
         project_name = None
 
-    # 如果抓不到專案名稱 (代表使用者可能直接開網頁沒掃碼)
+    # 強制檢查專案名稱
     if not project_name:
         st.warning("⚠️ 警告：未偵測到專案名稱，請重新掃描大螢幕上的 QR Code。")
         project_name = st.text_input("或請手動輸入專案名稱：")
         if not project_name:
-            st.stop() # 停止執行，直到有名稱為止
+            st.stop()
 
     st.markdown(f"### 📝 正在評估：**{project_name}**")
     st.markdown("---")
@@ -64,7 +77,6 @@ def render_voting_page():
     user_scores = {}
     current_total_score = 0
     
-    # 建立評分區塊
     for category, criteria_list in RUBRIC.items():
         st.subheader(category)
         for criterion, weight in criteria_list:
@@ -103,7 +115,7 @@ def render_voting_page():
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
             vote_record = {
-                "Project": project_name, # 確保寫入的是抓到的專案名
+                "Project": project_name,
                 "Voter": voter_name,
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -120,83 +132,86 @@ def render_voting_page():
                 else:
                     df_new.to_csv(FILE_NAME, mode='a', header=False, index=False)
                 st.success(f"✅ {voter_name} 的評分已送出！")
-                st.info(f"歸檔專案：{project_name}")
                 st.balloons()
                 time.sleep(2)
             except Exception as e:
-                st.error(f"寫入失敗，請重試: {e}")
-
-def get_existing_projects():
-    """ 從 CSV 讀取已存在的專案列表 """
-    if os.path.exists(FILE_NAME):
-        try:
-            df = pd.read_csv(FILE_NAME)
-            if "Project" in df.columns:
-                # 取得唯一值並轉為列表，過濾掉 nan
-                projects = df["Project"].dropna().unique().tolist()
-                return sorted(projects)
-        except:
-            return []
-    return []
+                st.error(f"寫入失敗: {e}")
 
 def render_dashboard_page():
     """ 顯示大螢幕儀表板 """
     
-    # 初始化 Session State (用來記住現在選的是哪個專案)
+    # 確保 Session State 有初始值
     if "current_project" not in st.session_state:
         st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
 
     # --- 側邊欄：專案管理中心 ---
     with st.sidebar:
-        st.header("⚙️ 專案管理控制台")
+        st.header("⚙️ 專案管理")
         
-        # 1. 取得現有專案列表
+        # 1. 模式選擇 (使用 Radio Button 強制切換)
+        mode = st.radio("操作模式", ["📂 切換現有專案", "➕ 建立新專案"], index=0)
+        
         existing_projects = get_existing_projects()
-        
-        # 2. 專案選擇模式
-        tab1, tab2 = st.tabs(["📂 選擇舊專案", "➕ 新增專案"])
-        
-        with tab1:
-            if existing_projects:
-                selected_proj = st.selectbox(
-                    "請選擇要顯示的專案：", 
-                    existing_projects,
-                    index=0 if existing_projects else None
-                )
-                if selected_proj:
-                    st.session_state["current_project"] = selected_proj
-            else:
-                st.caption("目前尚無任何專案紀錄。")
 
-        with tab2:
+        if mode == "📂 切換現有專案":
+            if existing_projects:
+                # 這裡的邏輯是：選單改變 -> 更新 Session State
+                selected_proj = st.selectbox(
+                    "請選擇專案：", 
+                    existing_projects,
+                    index=existing_projects.index(st.session_state["current_project"]) if st.session_state["current_project"] in existing_projects else 0
+                )
+                # 強制更新
+                if selected_proj != st.session_state["current_project"]:
+                    st.session_state["current_project"] = selected_proj
+                    st.rerun() # 立即刷新頁面
+            else:
+                st.info("尚無歷史專案，請先建立新專案。")
+                st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
+
+        elif mode == "➕ 建立新專案":
             new_proj_name = st.text_input("輸入新專案名稱：", placeholder="例如：胸腔 X 光 AI")
-            if st.button("建立並切換"):
+            if st.button("建立並切換至此專案"):
                 if new_proj_name:
                     st.session_state["current_project"] = new_proj_name
-                    st.success(f"已切換至新專案：{new_proj_name}")
+                    st.success(f"已切換至：{new_proj_name}")
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("請輸入名稱")
 
         st.divider()
-        st.info(f"📌 目前鎖定專案：\n\n**{st.session_state['current_project']}**")
+        st.markdown(f"📌 當前鎖定：\n**{st.session_state['current_project']}**")
         st.divider()
 
-        # 3. 網址設定
+        # 2. 網址與清除資料
         default_url = "https://shinkong-ai-vote.streamlit.app" 
         base_url = st.text_input("App 主網址", value=default_url)
         
-        # 產生帶有 Project 參數的連結 (做 URL 編碼處理特殊字元)
+        # URL Encode
         project_param = urllib.parse.quote(st.session_state["current_project"])
         vote_link = f"{base_url}/?page=vote&project={project_param}"
         
         if st.button("🔄 手動刷新數據"):
             st.rerun()
 
+        st.markdown("---")
+        # 3. 清除資料區 (Danger Zone)
+        with st.expander("🗑️ 危險區域 (清除資料)"):
+            st.warning("注意：這將刪除「所有專案」的 CSV 檔案，無法復原！")
+            if st.button("確認清除所有資料", type="primary"):
+                if os.path.exists(FILE_NAME):
+                    os.remove(FILE_NAME)
+                    st.success("所有資料已刪除！")
+                    # 重置專案名稱
+                    st.session_state["current_project"] = "新光醫院 AI 評估案 (預設)"
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.warning("目前沒有資料檔可刪除。")
+
     # --- Dashboard 主畫面 ---
     
-    # 標題區
     st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>最後更新: {datetime.now().strftime('%H:%M:%S')}</div>", unsafe_allow_html=True)
     st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
 
@@ -219,7 +234,6 @@ def render_dashboard_page():
     if os.path.exists(FILE_NAME):
         try:
             df_all = pd.read_csv(FILE_NAME)
-            # 欄位補全
             if "Project" not in df_all.columns: df_all["Project"] = "Default"
             if "Timestamp" not in df_all.columns: df_all["Timestamp"] = "2024-01-01 00:00:00"
         except:
@@ -322,14 +336,14 @@ def render_dashboard_page():
         history_summary["平均總分"] = history_summary["平均總分"].round(1)
         st.dataframe(history_summary, use_container_width=True)
 
-        with st.expander("📥 下載所有專案原始檔"):
+        with st.expander("📥 下載所有專案完整原始檔"):
             csv_all = df_all.to_csv(index=False).encode('utf-8-sig')
             st.download_button(label="下載完整備份 (All Projects)", data=csv_all, file_name='all_votes_backup.csv', mime='text/csv')
 
     time.sleep(5)
     st.rerun()
 
-# --- 4. 路由控制 ---
+# --- 5. 路由控制 ---
 query_params = st.query_params
 page = query_params.get("page", "dashboard")
 
