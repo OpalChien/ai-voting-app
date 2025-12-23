@@ -39,7 +39,7 @@ def render_voting_page():
     """ 顯示投票介面 """
     st.header("📝 AI 軟體評估表決")
     st.markdown("請針對各項目給予 **0 ~ 100** 分 (每 5 分為一個級距)。")
-    st.info("💡 下方總分會即時更新。")
+    st.info("💡 若需修改分數，請使用**相同姓名**重新提交即可覆蓋舊資料。")
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="例如：王醫師")
     
@@ -51,7 +51,7 @@ def render_voting_page():
     for category, criteria_list in RUBRIC.items():
         st.subheader(category)
         for criterion, weight in criteria_list:
-            # 修改：0-100分，間隔為 5
+            # 0-100分，間隔為 5
             score = st.slider(
                 f"{criterion}", 
                 min_value=0, 
@@ -92,6 +92,7 @@ def render_voting_page():
         if not voter_name:
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
+            # --- 核心邏輯修改：覆蓋機制 ---
             vote_record = {"Voter": voter_name}
             for k, v in user_scores.items():
                 vote_record[k] = v
@@ -101,19 +102,21 @@ def render_voting_page():
             
             df_new = pd.DataFrame([vote_record])
             
-            if not os.path.exists(FILE_NAME):
-                df_new.to_csv(FILE_NAME, index=False)
-            else:
+            # 讀取並覆蓋
+            if os.path.exists(FILE_NAME):
                 try:
                     df_old = pd.read_csv(FILE_NAME)
-                    if "Feedback" not in df_old.columns:
-                        df_old["Feedback"] = ""
-                        df_old.to_csv(FILE_NAME, index=False)
-                except:
-                    pass
-                df_new.to_csv(FILE_NAME, mode='a', header=False, index=False)
+                    # 刪除該名字舊的資料 (如果存在)
+                    df_old = df_old[df_old["Voter"] != voter_name]
+                    # 合併新資料
+                    df_final = pd.concat([df_old, df_new], ignore_index=True)
+                    df_final.to_csv(FILE_NAME, index=False)
+                except Exception as e:
+                    st.error(f"存檔時發生錯誤，請重試: {e}")
+            else:
+                df_new.to_csv(FILE_NAME, index=False)
                 
-            st.success("✅ 評分已送出！感謝您的參與。")
+            st.success(f"✅ {voter_name} 的評分已更新/送出！")
             st.balloons()
             time.sleep(2)
 
@@ -168,10 +171,9 @@ def render_dashboard_page():
                 
                 st.divider()
 
-                # 2. 投票分布圓餅圖 (新增功能)
+                # 2. 投票分布圓餅圖
                 st.subheader("🗳️ 投票結果分布")
                 
-                # 統計每個類別的人數
                 def classify_score(s):
                     if s >= 75: return "推薦引進"
                     elif s >= 60: return "修正後推薦"
@@ -181,11 +183,9 @@ def render_dashboard_page():
                 status_counts = df["Status"].value_counts().reset_index()
                 status_counts.columns = ["決策類別", "票數"]
                 
-                # 定義顏色映射
                 domain = ["推薦引進", "修正後推薦", "不推薦"]
-                range_ = ["#4CAF50", "#FF9800", "#F44336"] # 綠, 橘, 紅
+                range_ = ["#4CAF50", "#FF9800", "#F44336"]
 
-                # 繪製圓餅圖
                 base = alt.Chart(status_counts).encode(
                     theta=alt.Theta("票數", stack=True),
                     color=alt.Color("決策類別", scale=alt.Scale(domain=domain, range=range_))
@@ -196,14 +196,40 @@ def render_dashboard_page():
                     text=alt.Text("票數", format=".0f"),
                     order=alt.Order("決策類別"),
                     color=alt.value("black"),
-                    size=alt.value(20)  # 字體加大
+                    size=alt.value(20)
                 )
-
                 st.altair_chart(pie + text, use_container_width=True)
 
-                # (已移除各構面長條圖)
+                # 3. 各構面詳細長條圖 (恢復顯示)
+                st.subheader("📈 各構面達成率細項")
+                cat_data = []
+                for cat, criteria in RUBRIC.items():
+                    total_w = sum(w for c, w in criteria)
+                    cols = [c for c, w in criteria]
+                    if all(c in df.columns for c in cols):
+                        actual = df[cols].sum(axis=1).mean()
+                        pct = (actual / total_w) * 100
+                        short_name = cat.split(" ")[0] # 取簡稱
+                        cat_data.append({"構面": short_name, "達成率 (%)": round(pct, 1)})
+                
+                chart_df = pd.DataFrame(cat_data)
+                
+                bar_chart = alt.Chart(chart_df).mark_bar().encode(
+                    x=alt.X('達成率 (%)', scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y('構面', sort=None, axis=alt.Axis(labelFontSize=14)),
+                    color=alt.Color('達成率 (%)', scale=alt.Scale(scheme='blues'), legend=None),
+                    tooltip=['構面', '達成率 (%)']
+                ).properties(height=300)
 
-                # 3. 意見回饋區
+                text_chart = bar_chart.mark_text(
+                    align='left', baseline='middle', dx=3, fontSize=14
+                ).encode(
+                    text='達成率 (%)'
+                )
+                
+                st.altair_chart(bar_chart + text_chart, use_container_width=True)
+
+                # 4. 意見回饋區
                 st.subheader("💬 評委意見回饋")
                 if "Feedback" in df.columns:
                     feedbacks = df[df["Feedback"].notna() & (df["Feedback"] != "")][["Voter", "Feedback"]]
@@ -213,9 +239,8 @@ def render_dashboard_page():
                     else:
                         st.caption("目前尚無文字回饋。")
 
-                # 4. 詳細資料表
+                # 5. 詳細資料表
                 with st.expander("查看詳細評分數據"):
-                    # 顯示原始分數與細節，不需顯示圖表
                     st.dataframe(df)
 
                 time.sleep(5) # 自動刷新
