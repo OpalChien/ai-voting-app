@@ -43,6 +43,7 @@ def get_existing_projects():
         try:
             df = pd.read_csv(FILE_NAME)
             if "Project" in df.columns:
+                # 取得唯一值並轉為列表，過濾掉 nan
                 projects = df["Project"].dropna().unique().tolist()
                 return sorted(projects)
         except:
@@ -146,26 +147,38 @@ def render_dashboard_page():
     with st.sidebar:
         st.header("🗂️ 專案列表")
         
+        # 1. 取得現有專案
         existing_projects = get_existing_projects()
+        current_proj = st.session_state["current_project"]
+
+        # 【關鍵修復】
+        # 如果當前專案是新建立的（還不在 CSV 裡），我們手動把它加到選項列表裡
+        # 這樣 Radio Button 就不會因為找不到選項而報錯或卡住
+        display_options = existing_projects.copy()
+        if current_proj and current_proj not in display_options:
+            display_options.append(current_proj)
         
-        if existing_projects:
+        # 確保有選項可選
+        if display_options:
+            # 找出當前專案在列表中的位置
             try:
-                current_index = existing_projects.index(st.session_state["current_project"])
+                current_index = display_options.index(current_proj)
             except:
                 current_index = 0
             
             selected_proj = st.radio(
                 "點擊切換專案：",
-                existing_projects,
+                display_options,
                 index=current_index,
                 key="project_selector"
             )
             
+            # 切換邏輯
             if selected_proj != st.session_state["current_project"]:
                 st.session_state["current_project"] = selected_proj
                 st.rerun()
         else:
-            st.info("尚無歷史專案，請在下方建立。")
+            st.info("尚無專案，請先建立。")
 
         st.markdown("---")
         
@@ -185,7 +198,6 @@ def render_dashboard_page():
         
         with st.expander("🛠️ 進階設定 (網址/清除)"):
             default_url = "https://shinkong-ai-vote.streamlit.app" 
-            # 移除網址後面的斜線 (防呆)
             base_url_input = st.text_input("App 主網址", value=default_url)
             base_url = base_url_input.rstrip("/") 
             
@@ -212,19 +224,10 @@ def render_dashboard_page():
         st.info("👋 歡迎使用！請在左側 **「新增評估專案」** 或 **「點選現有專案」** 開始使用。")
         st.stop()
 
-    # --- 修正後的 QR Code 生成邏輯 ---
-    
-    # 1. 處理專案名稱 (URL Encode)
+    # QR Code 生成
     project_param = urllib.parse.quote(current_proj)
-    
-    # 2. 組合完整的投票網址
     vote_link = f"{base_url}/?page=vote&project={project_param}"
-    
-    # 3. 【關鍵修正】將整個投票網址再 Encode 一次，因為它要被當作參數傳給 QR API
-    # 這樣 QR API 才會把 &project=... 當作網址的一部分，而不是 API 的參數
     encoded_vote_link = urllib.parse.quote(vote_link)
-    
-    # 4. 生成最終 QR Code 圖片連結
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={encoded_vote_link}"
 
     col_qr, col_info = st.columns([1, 4])
@@ -254,8 +257,16 @@ def render_dashboard_page():
         
         if not df_project.empty:
             has_data = True
+            
+            # --- 核心邏輯：區分「最新資料」與「完整歷史」 ---
+            
+            # 1. 完整歷史 (History): 用於 Audit
+            df_history = df_project.sort_values("Timestamp", ascending=False)
+            
+            # 2. 最新資料 (Clean): 用於圖表計算
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             
+            # --- 圖表區 (使用 df_clean) ---
             avg = df_clean["Total Score"].mean()
             c1, c2, c3 = st.columns(3)
             c1.metric("📥 已投票人數", f"{len(df_clean)} 人")
@@ -317,18 +328,28 @@ def render_dashboard_page():
             text_chart = bar_chart.mark_text(align='left', baseline='middle', dx=3, fontSize=14).encode(text='達成率 (%)')
             st.altair_chart(bar_chart + text_chart, use_container_width=True)
 
-            # 詳細與下載
+            # --- 詳細與下載區 (【重點修正】：分頁顯示歷史) ---
             st.divider()
-            with st.expander("📂 查看與下載詳細數據", expanded=False):
-                st.markdown(f"### 【{current_proj}】最終採計結果")
-                st.dataframe(df_clean)
-                csv = df_clean.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(label="📥 下載 Excel", data=csv, file_name=f'{current_proj}_result.csv', mime='text/csv')
+            with st.expander("📂 查看與下載詳細數據 (含完整歷史)", expanded=False):
+                
+                tab1, tab2 = st.tabs(["📊 最終採計結果 (Clean)", "🕒 完整修改歷程 (History)"])
+                
+                with tab1:
+                    st.caption("此處僅顯示每位評審的「最新」一次投票，用於計算最終分數。")
+                    st.dataframe(df_clean)
+                    csv_clean = df_clean.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(label="📥 下載最終結果 (Excel)", data=csv_clean, file_name=f'{current_proj}_final.csv', mime='text/csv')
+                
+                with tab2:
+                    st.caption("此處顯示「所有」提交紀錄，包含被修正覆蓋的舊分數，可依時間追蹤。")
+                    # 顯示完整歷史 df_history
+                    st.dataframe(df_history)
+                    csv_history = df_history.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(label="📥 下載完整歷程 (Excel)", data=csv_history, file_name=f'{current_proj}_history.csv', mime='text/csv')
 
     if not has_data:
         st.warning(f"專案【{current_proj}】目前尚無資料，請評委掃碼開始投票。")
 
-    # 強制自動刷新 (每 5 秒)
     time.sleep(5)
     st.rerun()
 
