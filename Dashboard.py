@@ -92,7 +92,7 @@ def render_voting_page():
         if not voter_name:
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
-            # --- 核心邏輯修改：覆蓋機制 ---
+            # --- 覆蓋機制 ---
             vote_record = {"Voter": voter_name}
             for k, v in user_scores.items():
                 vote_record[k] = v
@@ -200,7 +200,7 @@ def render_dashboard_page():
                 )
                 st.altair_chart(pie + text, use_container_width=True)
 
-                # 3. 各構面詳細長條圖 (恢復顯示)
+                # 3. 各構面詳細長條圖 (Original Bar Chart)
                 st.subheader("📈 各構面達成率細項")
                 cat_data = []
                 for cat, criteria in RUBRIC.items():
@@ -209,7 +209,7 @@ def render_dashboard_page():
                     if all(c in df.columns for c in cols):
                         actual = df[cols].sum(axis=1).mean()
                         pct = (actual / total_w) * 100
-                        short_name = cat.split(" ")[0] # 取簡稱
+                        short_name = cat.split(" ")[0] 
                         cat_data.append({"構面": short_name, "達成率 (%)": round(pct, 1)})
                 
                 chart_df = pd.DataFrame(cat_data)
@@ -239,9 +239,7 @@ def render_dashboard_page():
                     else:
                         st.caption("目前尚無文字回饋。")
 
-                # 5. 詳細資料表
-                with st.expander("查看詳細評分數據"):
-                    st.dataframe(df)
+                # (已移除底部的詳細資料表 st.dataframe)
 
                 time.sleep(5) # 自動刷新
                 st.rerun()
