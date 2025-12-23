@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import time
-import altair as alt # 引入繪圖庫以製作更清楚的圖表
+import altair as alt
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評估", layout="wide")
@@ -36,10 +36,10 @@ FILE_NAME = "vote_data.csv"
 # --- 3. 定義功能函式 ---
 
 def render_voting_page():
-    """ 顯示投票介面 (手機端優化) """
+    """ 顯示投票介面 """
     st.header("📝 AI 軟體評估表決")
-    st.markdown("請針對各項目給予 **1 (最低) ~ 5 (最高)** 分。")
-    st.info("💡 下方分數會隨著您的調整即時更新。")
+    st.markdown("請針對各項目給予 **0 ~ 100** 分 (每 5 分為一個級距)。")
+    st.info("💡 下方總分會即時更新。")
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="例如：王醫師")
     
@@ -47,33 +47,31 @@ def render_voting_page():
     user_scores = {}
     current_total_score = 0
     
-    # 建立評分區塊 (移除 st.form 以實現即時計算)
+    # 建立評分區塊
     for category, criteria_list in RUBRIC.items():
         st.subheader(category)
         for criterion, weight in criteria_list:
-            # 1~5分，預設3分
+            # 修改：0-100分，間隔為 5
             score = st.slider(
                 f"{criterion}", 
-                min_value=1, 
-                max_value=5, 
-                value=3, 
+                min_value=0, 
+                max_value=100, 
+                value=70, 
+                step=5,
                 key=criterion,
-                help=f"權重: {weight}%"
+                help=f"滿分權重: {weight} 分"
             )
             
-            # 計算邏輯：(分數 x 20) = 百分比分數
-            # 加權得分 = (百分比分數 / 100) * 權重
-            # 簡化公式： (score * 20 / 100) * weight = (score / 5) * weight
-            weighted_score = (score / 5) * weight
+            # 計算邏輯：(原始分數 / 100) * 權重
+            weighted_score = (score / 100) * weight
             user_scores[criterion] = weighted_score
             current_total_score += weighted_score
 
     st.divider()
     
-    # === 新增功能：即時顯示目前總分 ===
+    # 即時顯示目前總分
     st.markdown("### 🏆 您目前的評分總計")
     
-    # 根據分數變色
     score_color = "red"
     if current_total_score >= 75: score_color = "green"
     elif current_total_score >= 60: score_color = "orange"
@@ -86,7 +84,7 @@ def render_voting_page():
     
     st.divider()
 
-    # === 新增功能：意見回饋 ===
+    # 意見回饋
     feedback = st.text_area("💬 意見回饋 / 備註 (選填)", placeholder="請輸入您對此案的具體建議...")
 
     # 提交按鈕
@@ -95,20 +93,17 @@ def render_voting_page():
             st.error("❌ 請輸入您的姓名後再提交！")
         else:
             vote_record = {"Voter": voter_name}
-            # 將剛才計算好的加權分數存入
             for k, v in user_scores.items():
                 vote_record[k] = v
             
             vote_record["Total Score"] = current_total_score
-            vote_record["Feedback"] = feedback # 存入回饋
+            vote_record["Feedback"] = feedback
             
             df_new = pd.DataFrame([vote_record])
             
-            # 處理檔案寫入
             if not os.path.exists(FILE_NAME):
                 df_new.to_csv(FILE_NAME, index=False)
             else:
-                # 確保舊檔案有 Feedback 欄位，避免報錯
                 try:
                     df_old = pd.read_csv(FILE_NAME)
                     if "Feedback" not in df_old.columns:
@@ -124,7 +119,7 @@ def render_voting_page():
 
 
 def render_dashboard_page():
-    """ 顯示大螢幕儀表板 (視覺優化版) """
+    """ 顯示大螢幕儀表板 """
     st.title("📊 新光醫院 AI 軟體評估 - 決策看板")
     
     # 側邊欄控制
@@ -166,58 +161,51 @@ def render_dashboard_page():
                 c1.metric("📥 已投票人數", f"{len(df)} 人")
                 c2.metric("🏆 平均總分", f"{avg:.1f}")
                 
-                result = "推薦引進 (Pass)" if avg >= 75 else "修正後推薦 (Conditional)" if avg >= 60 else "不推薦 (Reject)"
-                color = "green" if avg >= 75 else "orange" if avg >= 60 else "red"
-                c3.markdown(f"**最終建議：**")
-                c3.markdown(f":{color}[## {result}]")
+                final_result = "推薦引進 (Recommend)" if avg >= 75 else "修正後推薦 (Conditional)" if avg >= 60 else "不推薦 (Reject)"
+                final_color = "green" if avg >= 75 else "orange" if avg >= 60 else "red"
+                c3.markdown(f"**目前綜合決策：**")
+                c3.markdown(f":{final_color}[## {final_result}]")
                 
                 st.divider()
 
-                # 2. 圖表優化：橫向長條圖 + 大字體
-                st.subheader("📈 各構面達成率分析")
+                # 2. 投票分布圓餅圖 (新增功能)
+                st.subheader("🗳️ 投票結果分布")
                 
-                # 資料處理
-                cat_data = []
-                for cat, criteria in RUBRIC.items():
-                    total_w = sum(w for c, w in criteria)
-                    cols = [c for c, w in criteria]
-                    if all(c in df.columns for c in cols):
-                        actual = df[cols].sum(axis=1).mean()
-                        pct = (actual / total_w) * 100
-                        # 縮短名稱以免佔用太多空間
-                        short_name = cat.split(" ")[0] + " " + cat.split(" ")[1] 
-                        cat_data.append({"構面": short_name, "達成率 (%)": round(pct, 1)})
+                # 統計每個類別的人數
+                def classify_score(s):
+                    if s >= 75: return "推薦引進"
+                    elif s >= 60: return "修正後推薦"
+                    else: return "不推薦"
                 
-                chart_df = pd.DataFrame(cat_data)
+                df["Status"] = df["Total Score"].apply(classify_score)
+                status_counts = df["Status"].value_counts().reset_index()
+                status_counts.columns = ["決策類別", "票數"]
                 
-                # 使用 Altair 繪製高客製化圖表
-                base = alt.Chart(chart_df).encode(
-                    x=alt.X('達成率 (%)', scale=alt.Scale(domain=[0, 100]), title="達成率 (%)"),
-                    y=alt.Y('構面', sort=None, title="", axis=alt.Axis(labelFontSize=15, titleFontSize=16)), # 設定字體大小
-                    tooltip=['構面', '達成率 (%)']
+                # 定義顏色映射
+                domain = ["推薦引進", "修正後推薦", "不推薦"]
+                range_ = ["#4CAF50", "#FF9800", "#F44336"] # 綠, 橘, 紅
+
+                # 繪製圓餅圖
+                base = alt.Chart(status_counts).encode(
+                    theta=alt.Theta("票數", stack=True),
+                    color=alt.Color("決策類別", scale=alt.Scale(domain=domain, range=range_))
                 )
 
-                bar = base.mark_bar(height=40).encode(
-                    color=alt.Color('達成率 (%)', scale=alt.Scale(scheme='blues'), legend=None)
+                pie = base.mark_arc(outerRadius=120)
+                text = base.mark_text(radius=140).encode(
+                    text=alt.Text("票數", format=".0f"),
+                    order=alt.Order("決策類別"),
+                    color=alt.value("black"),
+                    size=alt.value(20)  # 字體加大
                 )
 
-                text = base.mark_text(
-                    align='left',
-                    baseline='middle',
-                    dx=3,
-                    fontSize=16  # 數據標籤字體大小
-                ).encode(
-                    text='達成率 (%)'
-                )
+                st.altair_chart(pie + text, use_container_width=True)
 
-                final_chart = (bar + text).properties(height=350) # 圖表高度
-                
-                st.altair_chart(final_chart, use_container_width=True)
+                # (已移除各構面長條圖)
 
-                # 3. 意見回饋區 (新增)
+                # 3. 意見回饋區
                 st.subheader("💬 評委意見回饋")
                 if "Feedback" in df.columns:
-                    # 過濾掉空白的回饋
                     feedbacks = df[df["Feedback"].notna() & (df["Feedback"] != "")][["Voter", "Feedback"]]
                     if not feedbacks.empty:
                         for index, row in feedbacks.iterrows():
@@ -227,16 +215,16 @@ def render_dashboard_page():
 
                 # 4. 詳細資料表
                 with st.expander("查看詳細評分數據"):
+                    # 顯示原始分數與細節，不需顯示圖表
                     st.dataframe(df)
 
-                time.sleep(5) # 自動刷新間隔
+                time.sleep(5) # 自動刷新
                 st.rerun()
             else:
                 st.warning("尚無投票資料...")
                 time.sleep(3)
                 st.rerun()
         except Exception as e:
-            # 容錯處理 (避免讀取衝突)
             time.sleep(1)
             st.rerun()
     else:
