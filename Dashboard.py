@@ -106,9 +106,7 @@ def render_voting_page():
             if os.path.exists(FILE_NAME):
                 try:
                     df_old = pd.read_csv(FILE_NAME)
-                    # 刪除該名字舊的資料 (如果存在)
                     df_old = df_old[df_old["Voter"] != voter_name]
-                    # 合併新資料
                     df_final = pd.concat([df_old, df_new], ignore_index=True)
                     df_final.to_csv(FILE_NAME, index=False)
                 except Exception as e:
@@ -200,36 +198,9 @@ def render_dashboard_page():
                 )
                 st.altair_chart(pie + text, use_container_width=True)
 
-                # 3. 各構面詳細長條圖 (Original Bar Chart)
-                st.subheader("📈 各構面達成率細項")
-                cat_data = []
-                for cat, criteria in RUBRIC.items():
-                    total_w = sum(w for c, w in criteria)
-                    cols = [c for c, w in criteria]
-                    if all(c in df.columns for c in cols):
-                        actual = df[cols].sum(axis=1).mean()
-                        pct = (actual / total_w) * 100
-                        short_name = cat.split(" ")[0] 
-                        cat_data.append({"構面": short_name, "達成率 (%)": round(pct, 1)})
-                
-                chart_df = pd.DataFrame(cat_data)
-                
-                bar_chart = alt.Chart(chart_df).mark_bar().encode(
-                    x=alt.X('達成率 (%)', scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y('構面', sort=None, axis=alt.Axis(labelFontSize=14)),
-                    color=alt.Color('達成率 (%)', scale=alt.Scale(scheme='blues'), legend=None),
-                    tooltip=['構面', '達成率 (%)']
-                ).properties(height=300)
+                # (已移除各構面長條圖)
 
-                text_chart = bar_chart.mark_text(
-                    align='left', baseline='middle', dx=3, fontSize=14
-                ).encode(
-                    text='達成率 (%)'
-                )
-                
-                st.altair_chart(bar_chart + text_chart, use_container_width=True)
-
-                # 4. 意見回饋區
+                # 3. 意見回饋區
                 st.subheader("💬 評委意見回饋")
                 if "Feedback" in df.columns:
                     feedbacks = df[df["Feedback"].notna() & (df["Feedback"] != "")][["Voter", "Feedback"]]
@@ -239,7 +210,20 @@ def render_dashboard_page():
                     else:
                         st.caption("目前尚無文字回饋。")
 
-                # (已移除底部的詳細資料表 st.dataframe)
+                # 4. 詳細資料表 & 下載功能 (新增)
+                st.divider()
+                with st.expander("📂 查看與下載詳細評分數據", expanded=False):
+                    st.dataframe(df)
+                    
+                    # 準備下載用的 CSV 格式 (為了讓 Excel 能讀取中文，使用 utf-8-sig 編碼)
+                    csv = df.to_csv(index=False).encode('utf-8-sig')
+                    
+                    st.download_button(
+                        label="📥 下載 Excel 報表 (CSV格式)",
+                        data=csv,
+                        file_name='新光醫院AI評估結果.csv',
+                        mime='text/csv',
+                    )
 
                 time.sleep(5) # 自動刷新
                 st.rerun()
