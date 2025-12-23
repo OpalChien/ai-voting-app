@@ -155,6 +155,7 @@ def render_dashboard_page():
         current_proj = st.session_state["current_project"]
 
         display_options = existing_projects.copy()
+        # 確保當前的新專案有在選項裡
         if current_proj and current_proj not in display_options:
             display_options.append(current_proj)
         
@@ -192,7 +193,7 @@ def render_dashboard_page():
 
         st.markdown("---")
         
-        # 3. 自動刷新開關 (解決亂跳問題的核心)
+        # 3. 自動刷新開關
         st.subheader("⚙️ 顯示設定")
         auto_refresh = st.toggle("🔄 開啟自動刷新 (Live)", value=True, help="開啟時每 5 秒更新一次數據。若要查看下方明細或下載檔案，建議【關閉】此功能以免畫面跳動。")
         
@@ -210,7 +211,6 @@ def render_dashboard_page():
 
     # --- Dashboard 主畫面 ---
     
-    # 顯示狀態列 (讓你知道有沒有在刷新)
     last_update = datetime.now().strftime('%H:%M:%S')
     status_text = f"🟢 Live 更新中 ({last_update})" if auto_refresh else "🔴 已暫停更新 (靜止模式)"
     st.markdown(f"<div style='text-align: right; color: gray; font-size: 12px;'>{status_text}</div>", unsafe_allow_html=True)
@@ -221,18 +221,28 @@ def render_dashboard_page():
 
     if not current_proj:
         st.info("👋 請在左側建立或選擇一個專案。")
-        st.stop()
+        # 這裡不使用 st.stop() 以免阻擋自動刷新邏輯，而是直接 return
+        if auto_refresh:
+            time.sleep(5)
+            st.rerun()
+        return
 
-    # QR Code
-    default_url = "https://shinkong-ai-vote.streamlit.app"
-    # 這裡可以用 st.text_input 讓使用者改，但為了畫面乾淨先寫死，需要可再加回
-    vote_link = f"{default_url}/?page=vote&project={urllib.parse.quote(current_proj)}"
-    encoded_vote_link = urllib.parse.quote(vote_link)
-    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={encoded_vote_link}"
+    # QR Code 生成 (加上防呆機制，避免 None 導致 Crash)
+    try:
+        default_url = "https://shinkong-ai-vote.streamlit.app"
+        # 使用 str() 強制轉型，避免 NoneType Error
+        safe_proj_param = urllib.parse.quote(str(current_proj))
+        vote_link = f"{default_url}/?page=vote&project={safe_proj_param}"
+        encoded_vote_link = urllib.parse.quote(vote_link)
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={encoded_vote_link}"
+    except Exception as e:
+        st.error(f"QR Code 生成錯誤: {e}")
+        qr_url = ""
 
     col_qr, col_info = st.columns([1, 4])
     with col_qr:
-        st.image(qr_url, caption=f"{current_proj}")
+        if qr_url:
+            st.image(qr_url, caption=f"{current_proj}")
     with col_info:
         st.info(f"📢 目前正在進行 **【{current_proj}】** 的評分")
         st.code(vote_link)
@@ -257,7 +267,10 @@ def render_dashboard_page():
             has_data = True
             
             # 分離 Clean 與 History
+            # History: 包含所有提交紀錄，依照時間新到舊排序
             df_history = df_project.sort_values("Timestamp", ascending=False)
+            
+            # Clean: 只取每個人最新的一筆
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             
             # --- 統計區 ---
@@ -331,11 +344,13 @@ def render_dashboard_page():
                 tab1, tab2 = st.tabs(["📊 最終採計結果 (Clean)", "🕒 完整修改歷程 (History)"])
                 
                 with tab1:
+                    st.markdown("**說明：** 此處僅顯示每位評審的「最新」一次投票，用於計算最終分數。")
                     st.dataframe(df_clean)
                     csv_clean = df_clean.to_csv(index=False).encode('utf-8-sig')
                     st.download_button("📥 下載 Excel (最終結果)", csv_clean, f'{current_proj}_final.csv', 'text/csv')
                 
                 with tab2:
+                    st.markdown("**說明：** 此處顯示「所有」提交紀錄，包含被覆蓋的舊分數。")
                     st.dataframe(df_history)
                     csv_history = df_history.to_csv(index=False).encode('utf-8-sig')
                     st.download_button("📥 下載 Excel (完整歷程)", csv_history, f'{current_proj}_history.csv', 'text/csv')
