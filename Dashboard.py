@@ -150,9 +150,12 @@ def render_dashboard_page():
     if "current_project" not in st.session_state:
         st.session_state["current_project"] = None
 
-    # ✅ 新增：radio widget 的 key 也初始化
     if "project_selector" not in st.session_state:
         st.session_state["project_selector"] = None
+
+    # ✅ 避免 radio 建立後又被改值：用 pending 做中繼
+    if "pending_project" not in st.session_state:
+        st.session_state["pending_project"] = None
 
     # --- 側邊欄 ---
     with st.sidebar:
@@ -163,15 +166,25 @@ def render_dashboard_page():
         current_proj = st.session_state["current_project"]
 
         display_options = existing_projects.copy()
-
         # 確保當前的新專案有在選項裡（即使尚未寫入 CSV）
         if current_proj and current_proj not in display_options:
             display_options.append(current_proj)
 
+        # ✅ 在建立 radio 之前，先套用上一輪 pending
+        if st.session_state.get("pending_project"):
+            pending = st.session_state["pending_project"]
+            st.session_state["current_project"] = pending
+            st.session_state["project_selector"] = pending
+            st.session_state["pending_project"] = None
+
         if display_options:
-            # ✅ 關鍵：在畫 radio 之前，確保 project_selector 是合法值
+            # radio 的 key 必須是合法值（必須在 radio 前）
             if st.session_state["project_selector"] not in display_options:
-                st.session_state["project_selector"] = current_proj if current_proj in display_options else display_options[0]
+                st.session_state["project_selector"] = (
+                    st.session_state["current_project"]
+                    if st.session_state["current_project"] in display_options
+                    else display_options[0]
+                )
 
             st.radio(
                 "點擊切換專案：",
@@ -179,7 +192,7 @@ def render_dashboard_page():
                 key="project_selector"
             )
 
-            # ✅ 單向同步：用 radio 的值回寫 current_project
+            # 用 radio 的值回寫 current_project
             if st.session_state["current_project"] != st.session_state["project_selector"]:
                 st.session_state["current_project"] = st.session_state["project_selector"]
                 st.rerun()
@@ -195,9 +208,9 @@ def render_dashboard_page():
             if st.form_submit_button("建立"):
                 new_proj_name = (new_proj_name or "").strip()
                 if new_proj_name:
-                    # ✅ 關鍵：同時更新 current_project + project_selector
+                    # ✅ radio 建立後不能直接改 project_selector，改用 pending
+                    st.session_state["pending_project"] = new_proj_name
                     st.session_state["current_project"] = new_proj_name
-                    st.session_state["project_selector"] = new_proj_name
 
                     st.success(f"已切換：{new_proj_name}")
                     time.sleep(0.2)
@@ -221,7 +234,8 @@ def render_dashboard_page():
                 if os.path.exists(FILE_NAME):
                     os.remove(FILE_NAME)
                 st.session_state["current_project"] = None
-                st.session_state["project_selector"] = None  # ✅ 重要：清掉 radio 狀態
+                st.session_state["project_selector"] = None
+                st.session_state["pending_project"] = None
                 st.success("已清空！")
                 time.sleep(0.5)
                 st.rerun()
@@ -240,13 +254,13 @@ def render_dashboard_page():
 
     if not current_proj:
         st.info("👋 請在左側建立或選擇一個專案。")
-        # 不用 st.stop()，避免阻擋刷新
+        # 這裡不使用 st.stop() 以免阻擋自動刷新邏輯，而是直接 return
         if auto_refresh:
             time.sleep(5)
             st.rerun()
         return
 
-    # QR Code 生成
+    # QR Code 生成 (加上防呆機制，避免 None 導致 Crash)
     try:
         default_url = "https://shinkong-ai-vote.streamlit.app"
         safe_proj_param = urllib.parse.quote(str(current_proj))
@@ -287,10 +301,11 @@ def render_dashboard_page():
         if not df_project.empty:
             has_data = True
 
-            # History: 所有提交紀錄（新到舊）
+            # 分離 Clean 與 History
+            # History: 包含所有提交紀錄，依照時間新到舊排序
             df_history = df_project.sort_values("Timestamp", ascending=False)
 
-            # Clean: 每個人最新一筆
+            # Clean: 只取每個人最新的一筆
             df_clean = df_project.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
 
             # --- 統計區 ---
@@ -356,7 +371,9 @@ def render_dashboard_page():
                 color=alt.Color('達成率 (%)', scale=alt.Scale(scheme='blues'), legend=None),
                 tooltip=['構面', '達成率 (%)']
             ).properties(height=300)
-            text_chart = bar_chart.mark_text(align='left', baseline='middle', dx=3, fontSize=14).encode(text='達成率 (%)')
+            text_chart = bar_chart.mark_text(align='left', baseline='middle', dx=3, fontSize=14).encode(
+                text='達成率 (%)'
+            )
             st.altair_chart(bar_chart + text_chart, use_container_width=True)
 
             # --- 詳細資料區 ---
