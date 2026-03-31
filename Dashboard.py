@@ -9,7 +9,7 @@ import urllib.parse
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評估", layout="wide")
 
-# --- 2. 評分標準與詳細內容 ---
+# --- 2. 完整 16 條指標內容定義 ---
 RUBRIC_CONTENT = {
     "1. 模型準確度與臨床一致性": "評核 AUC/感度/特異性是否達標。方式：查驗臨床驗證報告與 TFDA 許可證。",
     "2. 異常值偵測與風險警示": "辨識無法判讀影像之能力。方式：測試高風險病灶之即時通報機制。",
@@ -72,7 +72,7 @@ def render_voting_page():
         if not project_name: st.stop()
 
     st.markdown(f"## 📝 正在評估：{project_name}")
-    voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名僅供存檔，看板將匿名顯示")
+    voter_name = st.text_input("您的姓名 (評審)", placeholder="姓名僅供核對，看板匿名顯示")
 
     user_scores = {}
     total = 0
@@ -86,9 +86,9 @@ def render_voting_page():
 
     st.divider()
     c = "green" if total >= 75 else "orange" if total >= 60 else "red"
-    st.markdown(f"<h2 style='text-align:center;'>目前總得分：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align:center;'>目前得分：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
     
-    fb = st.text_area("💬 匿名建議 (將顯示於大螢幕看板)")
+    fb = st.text_area("💬 匿名建議 (將顯示於看板)")
     if st.button("🚀 確認提交", use_container_width=True, type="primary"):
         if not voter_name: st.error("請輸入姓名"); return
         rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
@@ -97,7 +97,7 @@ def render_voting_page():
         st.success("提交成功！"); st.balloons(); time.sleep(1); st.rerun()
 
 def render_dashboard_page():
-    """ 看板端：指標字體加大，並配合決策結論變色 """
+    """ 看板端：補齊 1-16 條，並根據決策顏色連動數據字體 """
     if "current_project" not in st.session_state: st.session_state["current_project"] = None
 
     with st.sidebar:
@@ -117,14 +117,14 @@ def render_dashboard_page():
             if os.path.exists(FILE_NAME): os.remove(FILE_NAME); st.rerun()
 
     curr = st.session_state["current_project"]
-    if not curr: st.info("👋 請在左側選擇或新增專案。"); return
+    if not curr: st.info("👋 請選擇或新增評估專案。"); return
 
     st.markdown(f"<h1 style='text-align: center;'>📊 {curr} - 決策看板</h1>", unsafe_allow_html=True)
     
     link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
-    c_l, c_r = st.columns([1, 4])
-    c_l.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
-    c_r.markdown(f"**評分連結：**<br><code style='font-size:22px;'>{link}</code>", unsafe_allow_html=True)
+    cl, cr = st.columns([1, 4])
+    cl.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
+    cr.markdown(f"**評分連結：**<br><code style='font-size:22px;'>{link}</code>", unsafe_allow_html=True)
 
     st.divider()
 
@@ -135,66 +135,61 @@ def render_dashboard_page():
             df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             avg = df_c["Total Score"].mean()
 
-            # 計算決策顏色邏輯
+            # 決策顏色連動
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
-            clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545" # 綠、黃、紅
+            clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545"
 
-            # 1. 核心指標區：字體加大，數值配合決策變色
+            # 1. 核心指標 (特大字體)
             m1, m2, m3 = st.columns(3)
+            def metric_box(label, val, unit=""):
+                return f"<div style='text-align: center;'><p style='font-size: 26px; color: #555; margin-bottom: 0;'>{label}</p><p style='font-size: 85px; font-weight: bold; color: {clr}; margin-top: -10px;'>{val} <span style='font-size: 30px;'>{unit}</span></p></div>"
             
-            # 使用自定義 HTML 渲染指標，使其顏色一致
-            m1.markdown(f"""
-                <div style='text-align: center;'>
-                    <p style='font-size: 24px; color: #555; margin-bottom: 0;'>已投人數</p>
-                    <p style='font-size: 80px; font-weight: bold; color: {clr}; margin-top: -10px;'>{len(df_c)} <span style='font-size: 30px;'>人</span></p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            m2.markdown(f"""
-                <div style='text-align: center;'>
-                    <p style='font-size: 24px; color: #555; margin-bottom: 0;'>平均總分</p>
-                    <p style='font-size: 80px; font-weight: bold; color: {clr}; margin-top: -10px;'>{avg:.1f}</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            m3.markdown(f"""
-                <div style='text-align: center;'>
-                    <p style='font-size: 24px; color: #555; margin-bottom: 0;'>決策結論：</p>
-                    <p style='font-size: 80px; font-weight: bold; color: {clr}; margin-top: -10px;'>{res}</p>
-                </div>
-            """, unsafe_allow_html=True)
+            m1.markdown(metric_box("已投人數", len(df_c), "人"), unsafe_allow_html=True)
+            m2.markdown(metric_box("平均總分", f"{avg:.1f}"), unsafe_allow_html=True)
+            m3.markdown(metric_box("目前決決策", res), unsafe_allow_html=True)
 
             st.divider()
             
-            # 2. 圖表並排
-            c_pie, c_bar = st.columns([2, 3])
-            with c_pie:
+            # 2. 圖表並排：圓餅圖 與 16 項長條圖
+            c_left, c_right = st.columns([2, 3])
+            with c_left:
                 st.markdown("### 🗳️ 投票結果分布")
                 df_c["Status"] = df_c["Total Score"].apply(lambda s: "推薦引進" if s >= 75 else "修正後推薦" if s >= 60 else "不推薦")
-                pie_df = df_c["Status"].value_counts().reset_index()
-                pie_df.columns = ["類別", "票數"]
-                pie = alt.Chart(pie_df).mark_arc(outerRadius=120).encode(
-                    theta="票數", color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#28a745", "#ffc107", "#dc3545"]), legend=alt.Legend(labelFontSize=18)),
+                st_counts = df_c["Status"].value_counts().reset_index()
+                st_counts.columns = ["類別", "票數"]
+                pie = alt.Chart(st_counts).mark_arc(outerRadius=120).encode(
+                    theta="票數", color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#28a745", "#ffc107", "#dc3545"]), legend=alt.Legend(labelFontSize=18))
                 ).properties(height=450)
                 st.altair_chart(pie, use_container_width=True)
 
-            with c_bar:
+            with c_right:
                 st.markdown("### 📈 16 項指標達成率 (%)")
                 items = []
+                # 確保 1-16 項強行全部顯示
                 for cat, crits in RUBRIC.items():
                     for name, w in crits:
-                        if name in df_c.columns:
-                            items.append({"指標": name, "率": round((df_c[name].mean()/w)*100, 1), "分類": cat.split(" ")[0]})
-                bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
-                    x=alt.X("率", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=16)), 
-                    y=alt.Y("指標", sort=None, axis=alt.Axis(labelFontSize=18, labelLimit=500)), 
-                    color=alt.Color("分類", legend=alt.Legend(labelFontSize=16)),
-                ).properties(height=500)
-                st.altair_chart(bar + bar.mark_text(align='left', dx=5, fontSize=18).encode(text='率:Q'), use_container_width=True)
+                        # 如果資料中沒有該項，預設給 0
+                        val = df_c[name].mean() if name in df_c.columns else 0
+                        items.append({
+                            "指標項目": name, 
+                            "達成率 (%)": round((val/w)*100, 1), 
+                            "構面分類": cat.split(" ")[0]
+                        })
+                
+                bar_df = pd.DataFrame(items)
+                bar = alt.Chart(bar_df).mark_bar().encode(
+                    x=alt.X("達成率 (%)", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=16)), 
+                    y=alt.Y("指標項目", sort=None, axis=alt.Axis(labelFontSize=18, labelLimit=500)), 
+                    color=alt.Color("構面分類", legend=alt.Legend(labelFontSize=16)),
+                    tooltip=["指標項目", "達成率 (%)"]
+                ).properties(height=550) # 高度增加以容納 16 項
+                
+                txt = bar.mark_text(align='left', dx=5, fontSize=18, fontWeight='bold').encode(text='達成率 (%):Q')
+                st.altair_chart(bar + txt, use_container_width=True)
 
-            # --- 3. 補齊 16 條指標內容說明 ---
+            # 3. 完整 16 條準則說明 (大字排版)
             st.divider()
-            st.markdown("<h2 style='color: #1E90FF;'>📋 16 項評核指標定義與準則</h2>", unsafe_allow_html=True)
+            st.markdown("<h2 style='color: #1E90FF;'>📋 1-16 項評核指標定義與準則</h2>", unsafe_allow_html=True)
             gl, gr = st.columns(2)
             all_g = list(RUBRIC_CONTENT.items())
             def show_g(items, col):
@@ -202,18 +197,18 @@ def render_dashboard_page():
                     col.markdown(f"""<div style="background-color:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:10px;border-left:5px solid #1E90FF;"><span style="font-size:20px;font-weight:bold;color:#333;">{n}</span><br><span style="font-size:18px;color:#666;">{c}</span></div>""", unsafe_allow_html=True)
             show_g(all_g[:8], gl); show_g(all_g[8:], gr)
 
-            # --- 4. 匿名建議 (特大字體) ---
+            # 4. 匿名意見 (特大字體)
             st.divider()
             st.markdown("<h2 style='color: #4B0082;'>💬 評審匿名建議</h2>", unsafe_allow_html=True)
             fb_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
             if fb_list:
                 for i, msg in enumerate(fb_list, 1):
-                    st.markdown(f"""<div style="background-color:#f0f2f6;padding:20px;border-radius:10px;margin-bottom:15px;border-left:10px solid #4B0082;"><span style="font-size:28px;font-weight:500;">{msg}</span></div>""", unsafe_allow_html=True)
-            else: st.caption("目前無意見。")
+                    st.markdown(f"""<div style="background-color:#f0f2f6;padding:25px;border-radius:10px;margin-bottom:15px;border-left:10px solid #4B0082;"><span style="font-size:30px;font-weight:500;">{msg}</span></div>""", unsafe_allow_html=True)
+            else: st.caption("尚未有意見回饋。")
 
     if auto: time.sleep(5); st.rerun()
 
-# --- 5. 路由 ---
+# --- 5. 路由控制 ---
 pg = st.query_params.get("page", "dashboard")
 if pg == "vote": render_voting_page()
 else: render_dashboard_page()
