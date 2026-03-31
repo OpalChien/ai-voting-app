@@ -9,7 +9,7 @@ import urllib.parse
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評定", layout="wide")
 
-# --- 2. 完整 16 條內容與權重 ---
+# --- 2. 核心內容定義 (1-16項) ---
 RUBRIC_CONTENT = {
     "1. 模型準確度與臨床一致性": "評核 AUC/感度/特異性是否達標。方式：查驗臨床驗證報告與 TFDA 許可證。",
     "2. 異常值偵測與風險警示": "辨識無法判讀影像之能力。方式：測試高風險病灶之即時通報機制。",
@@ -50,7 +50,7 @@ RUBRIC = {
 
 FILE_NAME = "vote_data_v2.csv"
 
-# --- 3. 核心輔助函式 ---
+# --- 3. 輔助函式 ---
 def ensure_csv():
     if not os.path.exists(FILE_NAME):
         cols = ["Project", "Voter", "Timestamp", "Total Score", "Feedback"]
@@ -71,7 +71,7 @@ def get_existing_projects():
 def render_voting_page():
     project_from_url = st.query_params.get("project", "")
     if not project_from_url:
-        project_name = st.text_input("請手動輸入專案名稱：")
+        project_name = st.text_input("請輸入專案名稱：")
     else:
         project_name = project_from_url
         st.markdown(f"## 📝 正在評估：{project_name}")
@@ -134,7 +134,6 @@ def render_dashboard_page():
 
     st.markdown(f"<h1 style='text-align: center;'>📊 {curr} - 決策看板</h1>", unsafe_allow_html=True)
     
-    # QR Code & 網址 (加大字體)
     link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
     col_qr, col_lnk = st.columns([1, 4])
     with col_qr:
@@ -154,7 +153,7 @@ def render_dashboard_page():
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545"
 
-            # 1. 頂部數據 (大字體)
+            # 1. 頂部數據
             m1, m2, m3 = st.columns(3)
             def box(l, v): return f"<div style='text-align:center;'><p style='font-size:28px; color:#555;'>{l}</p><p style='font-size:85px; font-weight:bold; color:{clr}; margin-top:-20px;'>{v}</p></div>"
             m1.markdown(box("已投人數", len(df_c)), unsafe_allow_html=True)
@@ -163,7 +162,7 @@ def render_dashboard_page():
 
             st.divider()
             
-            # 2. 圖表並排：圓餅圖 與 16 項達成率
+            # 2. 圖表並排
             c_pie, c_bar = st.columns([2, 3])
             with c_pie:
                 st.markdown("### 🗳️ 投票分佈")
@@ -187,7 +186,7 @@ def render_dashboard_page():
                 ).properties(height=500)
                 st.altair_chart(bar + bar.mark_text(align='left', dx=5, fontSize=16, fontWeight='bold').encode(text='率:Q'), use_container_width=True)
 
-            # 3. 匿名意見 (大字體)
+            # 3. 匿名意見
             st.divider()
             st.markdown("<h2 style='color: #4B0082;'>💬 評審匿名意見回饋</h2>", unsafe_allow_html=True)
             fb_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
@@ -196,23 +195,26 @@ def render_dashboard_page():
                     st.markdown(f"""<div style="background-color:#f0f2f6;padding:25px;border-radius:10px;margin-bottom:15px;border-left:10px solid #4B0082;"><span style="font-size:30px;font-weight:500;">{msg}</span></div>""", unsafe_allow_html=True)
             else: st.caption("尚未有意見回饋。")
 
-        # ✅ 4. 1-16 項指標評選準則 (放在數據判斷外面，確保不管有沒有人投都顯示)
-        st.divider()
-        st.markdown("<h2 style='color: #1E90FF;'>📋 1-16 項評核指標定義與權重分配</h2>", unsafe_allow_html=True)
-        gl, gr = st.columns(2)
-        full_guide = []
-        for cat, crits in RUBRIC.items():
-            for name, w in crits: full_guide.append((name, w, RUBRIC_CONTENT[name]))
-        def show_g(items, col):
-            for n, w, c in items:
-                col.markdown(f'<div style="background-color:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:10px;border-left:5px solid #1E90FF;"><span style="font-size:20px;font-weight:bold;color:#333;">{n} <span style="color:#ff4b4b;">({w}分)</span></span><br><span style="font-size:18px;color:#666;">{c}</span></div>', unsafe_allow_html=True)
-        show_g(full_guide[:8], gl); show_g(full_guide[8:], gr)
+            # 4. 投票歷程
+            st.divider()
+            with st.expander("🕒 完整投票歷程 (History Log)", expanded=False):
+                st.dataframe(df_p.sort_values("Timestamp", ascending=False), use_container_width=True)
+                st.download_button("📥 下載 Excel", df_p.to_csv(index=False).encode('utf-8-sig'), f'{curr}_log.csv')
+        else:
+            st.warning("⚠️ 該專案目前尚無正式評分數據。")
 
-        # ✅ 5. 評審投票歷程 (Log)
-        st.divider()
-        with st.expander("🕒 完整投票歷程 (History Log)", expanded=False):
-            st.dataframe(df_p.sort_values("Timestamp", ascending=False), use_container_width=True)
-            st.download_button("📥 下載 Excel 原始數據", df_p.to_csv(index=False).encode('utf-8-sig'), f'{curr}_history.csv')
+    # ✅ 關鍵修正：將 1-16 項指標準則移到最外層，確保只顯示一次
+    st.divider()
+    st.markdown("<h2 style='color: #1E90FF;'>📋 1-16 項評核指標定義與權重分配</h2>", unsafe_allow_html=True)
+    gl, gr = st.columns(2)
+    full_guide = []
+    for cat, crits in RUBRIC.items():
+        for name, w in crits: full_guide.append((name, w, RUBRIC_CONTENT[name]))
+    
+    def show_g(items, col):
+        for n, w, c in items:
+            col.markdown(f'<div style="background-color:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:10px;border-left:5px solid #1E90FF;"><span style="font-size:20px;font-weight:bold;color:#333;">{n} <span style="color:#ff4b4b;">({w}分)</span></span><br><span style="font-size:18px;color:#666;">{c}</span></div>', unsafe_allow_html=True)
+    show_g(full_guide[:8], gl); show_g(full_guide[8:], gr)
 
     if auto: time.sleep(5); st.rerun()
 
