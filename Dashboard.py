@@ -9,13 +9,13 @@ import urllib.parse
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評定", layout="wide")
 
-# --- 2. 完整 16 條指標內容與權重定義 ---
+# --- 2. 完整 16 條指標與權重 (保持不變) ---
 RUBRIC_CONTENT = {
     "1. 模型準確度與臨床一致性": "評核 AUC/感度/特異性是否達標。方式：查驗臨床驗證報告與 TFDA 許可證。",
     "2. 異常值偵測與風險警示": "辨識無法判讀影像之能力。方式：測試高風險病灶之即時通報機制。",
     "3. 病患安全防護機制": "防止過度診斷。方式：確認具備『醫師覆核』流程，而非 AI 自動發報。",
     "4. 臨床工作流適應性": "是否符合現有診斷流程。方式：評估醫師操作步驟是否增加負擔或能簡化流程。",
-    "5. 院內系統整合度": "支援 DICOM/HL7。方式：觀察與 PACS/HIS 介接流暢度 (建議 < 5秒)。",
+    "5. 院內系統整合度": "支援 DICOM/HL7 指標。方式：觀察與 PACS/HIS 介接流暢度 (建議 < 5秒)。",
     "6. 資安合規性": "數據傳輸加密。方式：查驗 ISO 27001 認證或資安漏洞掃描報告。",
     "7. 系統維運與更新機制": "系統穩定性。方式：確認當機備援方案 (DR) 及廠商 SLA 支援能力。",
     "8. 數據隱私與去識別化": "保護病患隱私。方式：查驗資料產出、傳輸及儲存是否落實去識別化規範。",
@@ -50,111 +50,102 @@ RUBRIC = {
 
 FILE_NAME = "vote_data_v2.csv"
 
-# --- 3. 輔助函式 ---
+# --- 3. 核心輔助函式：確保 CSV 結構存在 ---
+def ensure_csv():
+    if not os.path.exists(FILE_NAME):
+        # 建立包含所有欄位的空 DataFrame
+        cols = ["Project", "Voter", "Timestamp", "Total Score", "Feedback"]
+        for cat in RUBRIC:
+            for name, weight in RUBRIC[cat]:
+                cols.append(name)
+        df_empty = pd.DataFrame(columns=cols)
+        df_empty.to_csv(FILE_NAME, index=False)
+
 def get_existing_projects():
-    if os.path.exists(FILE_NAME):
-        try:
-            df = pd.read_csv(FILE_NAME)
-            projs = df["Project"].dropna().unique().tolist()
-            return sorted([str(p) for p in projs])
-        except: return []
-    return []
+    ensure_csv()
+    try:
+        df = pd.read_csv(FILE_NAME)
+        return sorted([str(p) for p in df["Project"].dropna().unique().tolist()])
+    except:
+        return []
 
 # --- 4. 頁面渲染 ---
 
 def render_voting_page():
-    """ 投票端 """
-    try:
-        project_name = st.query_params.get("project", None)
-    except: project_name = None
+    project_name = st.query_params.get("project", st.text_input("專案名稱："))
+    if not project_name: st.stop()
 
-    if not project_name:
-        project_name = st.text_input("請輸入專案名稱：")
-        if not project_name: st.stop()
-
-    st.markdown(f"## 📝 正在評估：{project_name}")
-    voter_name = st.text_input("您的姓名 (評審)", placeholder="姓名僅供核對用")
+    st.markdown(f"## 📝 正在評審：{project_name}")
+    voter = st.text_input("您的姓名")
 
     user_scores = {}
     total = 0
     for cat, items in RUBRIC.items():
-        st.markdown(f"### {cat}")
+        st.subheader(cat)
         for name, weight in items:
-            score = st.slider(name, 0, 100, 70, 5, help=f"{RUBRIC_CONTENT.get(name)}\n\n滿分權重：{weight}分", key=name)
+            score = st.slider(name, 0, 100, 70, 5, help=f"權重：{weight}")
             w_score = (score/100)*weight
             user_scores[name] = w_score
             total += w_score
 
-    st.divider()
-    c = "green" if total >= 75 else "orange" if total >= 60 else "red"
-    st.markdown(f"<h2 style='text-align:center;'>目前得分：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
-    
-    fb = st.text_area("💬 匿名評語 (建議)")
-    if st.button("🚀 確認提交", use_container_width=True, type="primary"):
-        if not voter_name: st.error("請輸入姓名"); return
-        rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
+    if st.button("🚀 提交評分", use_container_width=True, type="primary"):
+        if not voter: st.error("請輸入姓名"); return
+        ensure_csv()
+        rec = {"Project": project_name, "Voter": voter, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total}
         rec.update(user_scores)
-        pd.DataFrame([rec]).to_csv(FILE_NAME, mode='a', index=False, header=not os.path.exists(FILE_NAME))
-        st.success("提交成功！"); st.balloons(); time.sleep(1); st.rerun()
+        pd.DataFrame([rec]).to_csv(FILE_NAME, mode='a', index=False, header=False)
+        st.success("提交成功！"); st.rerun()
 
 def render_dashboard_page():
-    """ 看板端 """
-    # 初始化 session_state
-    if "current_project" not in st.session_state:
-        st.session_state["current_project"] = None
+    if "current_project" not in st.session_state: st.session_state["current_project"] = None
 
     with st.sidebar:
         st.header("🗂️ 專案管理")
+        
+        # 修正：直接建立空的專案紀錄到 CSV，確保清單立刻更新
+        with st.form("new_proj", clear_on_submit=True):
+            name = st.text_input("➕ 新增專案")
+            if st.form_submit_button("建立"):
+                if name:
+                    ensure_csv()
+                    # 建立一筆預設資料讓 CSV 記住專案名稱
+                    dummy = {"Project": name, "Voter": "SYSTEM_INIT", "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                    pd.DataFrame([dummy]).to_csv(FILE_NAME, mode='a', index=False, header=False)
+                    st.session_state["current_project"] = name
+                    st.rerun()
+
+        st.divider()
         projs = get_existing_projects()
-        
-        # 新增專案功能修正：使用更穩定的提交邏輯
-        with st.form("new_project_form", clear_on_submit=True):
-            new_p = st.text_input("➕ 新增專案名稱")
-            submitted = st.form_submit_button("建立專案")
-            if submitted and new_p:
-                st.session_state["current_project"] = new_p
-                st.rerun()
-
-        st.divider()
-        
-        # 專案切換
         if projs:
-            # 確保選擇框的預設值正確
-            index = 0
-            if st.session_state["current_project"] in projs:
-                index = projs.index(st.session_state["current_project"])
-            
-            sel = st.selectbox("🎯 切換目前專案：", projs, index=index)
+            idx = projs.index(st.session_state["current_project"]) if st.session_state["current_project"] in projs else 0
+            sel = st.selectbox("🎯 切換專案：", projs, index=idx)
             st.session_state["current_project"] = sel
-        else:
-            st.warning("目前無任何專案數據，請先從上方新增或由手機端提交第一筆數據。")
+        
+        auto = st.toggle("🔄 自動刷新", value=True)
+        if st.button("🗑️ 清空所有資料"):
+            if os.path.exists(FILE_NAME): os.remove(FILE_NAME)
+            st.session_state["current_project"] = None
+            st.rerun()
 
-        st.divider()
-        auto = st.toggle("🔄 自動刷新 (Live)", value=True)
-        if st.button("🗑️ 清空所有歷史數據"):
-            if os.path.exists(FILE_NAME): 
-                os.remove(FILE_NAME)
-                st.session_state["current_project"] = None
-                st.rerun()
-
-    curr = st.session_state.get("current_project")
+    curr = st.session_state["current_project"]
     if not curr:
-        st.info("👋 請在左側輸入專案名稱並點擊『建立專案』，或直接由手機掃碼開始評分。")
+        st.info("請在左側『新增專案』。")
         return
 
-    st.markdown(f"<h1 style='text-align: center;'>📊 {curr} - 決策看板</h1>", unsafe_allow_html=True)
+    st.title(f"📊 {curr} - 決議看板")
     
+    # QR Code
     link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
-    cl, cr = st.columns([1, 4])
-    cl.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
-    cr.markdown(f"**手機評分連結：**<br><code style='font-size:22px;'>{link}</code>", unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 4])
+    c1.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
+    c2.markdown(f"**連結：**<br><code>{link}</code>", unsafe_allow_html=True)
 
     st.divider()
 
-    # 數據顯示邏輯
     if os.path.exists(FILE_NAME):
         df = pd.read_csv(FILE_NAME)
-        df_p = df[df["Project"] == curr]
+        # 過濾掉初始化用的系統紀錄
+        df_p = df[(df["Project"] == curr) & (df["Voter"] != "SYSTEM_INIT")]
         
         if not df_p.empty:
             df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
@@ -162,71 +153,41 @@ def render_dashboard_page():
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545"
 
-            # 1. 核心指標 (特大字體)
-            m1, m2, m3 = st.columns(3)
-            def metric_html(label, val, unit=""):
-                return f"<div style='text-align: center;'><p style='font-size: 26px; color: #555; margin-bottom: 0;'>{label}</p><p style='font-size: 85px; font-weight: bold; color: {clr}; margin-top: -10px;'>{val} <span style='font-size: 30px;'>{unit}</span></p></div>"
-            m1.markdown(metric_html("已投人數", len(df_c), "人"), unsafe_allow_html=True)
-            m2.markdown(metric_html("平均總分", f"{avg:.1f}"), unsafe_allow_html=True)
-            m3.markdown(metric_html("目前決策", res), unsafe_allow_html=True)
+            # 數據特大字體
+            col1, col2, col3 = st.columns(3)
+            def box(l, v): return f"<div style='text-align:center;'><p style='font-size:26px;'>{l}</p><p style='font-size:80px; font-weight:bold; color:{clr};'>{v}</p></div>"
+            col1.markdown(box("已投人數", len(df_c)), unsafe_allow_html=True)
+            col2.markdown(box("平均總分", f"{avg:.1f}"), unsafe_allow_html=True)
+            col3.markdown(box("目前決策", res), unsafe_allow_html=True)
 
             st.divider()
-            
-            # 2. 圖表區
-            c_left, c_right = st.columns([2, 3])
-            with c_left:
-                st.markdown("### 🗳️ 投票結果分布")
-                df_c["Status"] = df_c["Total Score"].apply(lambda s: "推薦引進" if s >= 75 else "修正後推薦" if s >= 60 else "不推薦")
-                st_counts = df_c["Status"].value_counts().reset_index()
-                st_counts.columns = ["類別", "票數"]
-                pie = alt.Chart(st_counts).mark_arc(outerRadius=120).encode(
-                    theta="票數", color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#28a745", "#ffc107", "#dc3545"]), legend=alt.Legend(labelFontSize=18))
-                ).properties(height=450)
-                st.altair_chart(pie, use_container_width=True)
-
-            with c_right:
-                st.markdown("### 📈 16 項指標達成率 (%)")
-                items = []
-                for cat, crits in RUBRIC.items():
-                    for name, w in crits:
-                        val = df_c[name].mean() if name in df_c.columns else 0
-                        items.append({"指標項目": name, "達成率 (%)": round((val/w)*100, 1), "滿分權重": w, "構面分類": cat.split(" ")[0]})
-                
-                bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
-                    x=alt.X("達成率 (%)", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=16)), 
-                    y=alt.Y("指標項目", sort=None, axis=alt.Axis(labelFontSize=18, labelLimit=500)), 
-                    color=alt.Color("構面分類", legend=alt.Legend(labelFontSize=16, offset=50)),
-                    tooltip=["指標項目", "達成率 (%)", "滿分權重"]
-                ).properties(height=550)
-                st.altair_chart((bar + bar.mark_text(align='left', dx=5, fontSize=18, fontWeight='bold').encode(text='達成率 (%):Q')), use_container_width=True)
-
-            # 3. 準則與權重
-            st.divider()
-            st.markdown("<h2 style='color: #1E90FF;'>📋 1-16 項評核指標定義與權重分配</h2>", unsafe_allow_html=True)
-            gl, gr = st.columns(2)
-            full_guide = []
+            # 圖表 (16項達成率)
+            items = []
             for cat, crits in RUBRIC.items():
-                for name, w in crits:
-                    full_guide.append((name, w, RUBRIC_CONTENT[name]))
-            
-            def show_g(items, col):
-                for n, w, c in items:
-                    col.markdown(f'<div style="background-color:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:10px;border-left:5px solid #1E90FF;"><span style="font-size:20px;font-weight:bold;color:#333;">{n} <span style="color:#ff4b4b;">(權重: {w}分)</span></span><br><span style="font-size:18px;color:#666;">{c}</span></div>', unsafe_allow_html=True)
-            show_g(full_guide[:8], gl); show_g(full_guide[8:], gr)
-
-            # 4. 匿名意見
-            st.divider()
-            st.markdown("<h2 style='color: #4B0082;'>💬 評審匿名建議回饋</h2>", unsafe_allow_html=True)
-            fb_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
-            if fb_list:
-                for i, msg in enumerate(fb_list, 1):
-                    st.markdown(f'<div style="background-color:#f0f2f6;padding:25px;border-radius:10px;margin-bottom:15px;border-left:10px solid #4B0082;"><span style="font-size:30px;font-weight:500;">{msg}</span></div>', unsafe_allow_html=True)
+                for n, w in crits:
+                    v = df_c[n].mean() if n in df_c.columns else 0
+                    items.append({"項": n, "率": round((v/w)*100, 1), "類": cat.split(" ")[0]})
+            bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
+                x=alt.X("率", scale=alt.Scale(domain=[0, 100])), y=alt.Y("項", sort=None), color="類"
+            ).properties(height=500)
+            st.altair_chart(bar + bar.mark_text(align='left', dx=5, fontSize=18).encode(text='率:Q'), use_container_width=True)
         else:
-            st.warning(f"目前專案『{curr}』尚未有投票數據。請掃描 QR Code 或由手機端開始評分。")
+            st.warning("目前尚無評分數據。")
+
+    # 顯示 16 條準則說明
+    st.divider()
+    st.markdown("### 📋 1-16 項指標定義與權重")
+    gl, gr = st.columns(2)
+    full = []
+    for cat, crits in RUBRIC.items():
+        for n, w in crits: full.append((n, w, RUBRIC_CONTENT[n]))
+    def show_g(its, col):
+        for n, w, c in its:
+            col.markdown(f'<div style="background-color:#f8f9fa;padding:10px;margin-bottom:5px;border-left:5px solid #1E90FF;"><b>{n} ({w}分)</b><br><small>{c}</small></div>', unsafe_allow_html=True)
+    show_g(full[:8], gl); show_g(full[8:], gr)
 
     if auto: time.sleep(5); st.rerun()
 
 # --- 5. 路由 ---
-pg = st.query_params.get("page", "dashboard")
-if pg == "vote": render_voting_page()
+if st.query_params.get("page") == "vote": render_voting_page()
 else: render_dashboard_page()
