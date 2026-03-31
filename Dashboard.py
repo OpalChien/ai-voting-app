@@ -7,7 +7,7 @@ from datetime import datetime
 import urllib.parse
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="新光醫院 AI 軟體評估", layout="wide")
+st.set_page_config(page_title="新光醫院 AI 軟體評定", layout="wide")
 
 # --- 2. 評分標準與詳細說明 ---
 RUBRIC_DETAILS = {
@@ -62,7 +62,7 @@ def get_existing_projects():
 # --- 4. 頁面渲染 ---
 
 def render_voting_page():
-    """ 投票端：保留所有邏輯與權重說明 """
+    """ 投票端：優化手機端閱讀體驗 """
     try:
         project_name = st.query_params.get("project", None)
     except: project_name = None
@@ -71,13 +71,13 @@ def render_voting_page():
         project_name = st.text_input("請輸入專案名稱：")
         if not project_name: st.stop()
 
-    st.markdown(f"### 📝 正在評估：**{project_name}**")
-    voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名僅供後台存檔，看板將匿名顯示")
+    st.markdown(f"## 📝 正在評估：{project_name}")
+    voter_name = st.text_input("您的姓名 (評審)", placeholder="後台核對用，看板將匿名顯示")
 
     user_scores = {}
     total = 0
     for cat, items in RUBRIC.items():
-        st.subheader(cat)
+        st.markdown(f"### {cat}")
         for name, weight in items:
             score = st.slider(name, 0, 100, 70, 5, help=RUBRIC_DETAILS.get(name, ""), key=name)
             w_score = (score/100)*weight
@@ -86,11 +86,11 @@ def render_voting_page():
 
     st.divider()
     c = "green" if total >= 75 else "orange" if total >= 60 else "red"
-    st.markdown(f"### 總分計：<span style='color:{c}; font-size:40px;'>{total:.1f}</span>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align: center;'>目前總計：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
     
-    fb = st.text_area("💬 建議與回饋 (將匿名顯示在看板上)")
-    if st.button("🚀 確認提交", use_container_width=True, type="primary"):
-        if not voter_name: st.error("請輸入姓名以完成存檔"); return
+    fb = st.text_area("💬 匿名建議 (將直接顯示於大螢幕)")
+    if st.button("🚀 確認提交評分", use_container_width=True, type="primary"):
+        if not voter_name: st.error("請輸入姓名"); return
         rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
         rec.update(user_scores)
         df = pd.DataFrame([rec])
@@ -98,7 +98,7 @@ def render_voting_page():
         st.success("提交成功！"); st.balloons(); time.sleep(1); st.rerun()
 
 def render_dashboard_page():
-    """ 看板端：隱藏姓名、恢復圓餅圖、新增匿名意見與達成率圖 """
+    """ 看板端：字體放大優化版本 """
     if "current_project" not in st.session_state: st.session_state["current_project"] = None
 
     with st.sidebar:
@@ -119,14 +119,15 @@ def render_dashboard_page():
             st.rerun()
 
     curr = st.session_state["current_project"]
-    if not curr: st.info("👋 請在左側選擇或新增一個評估專案。"); return
+    if not curr: st.info("👋 請在左側選擇或新增評估專案。"); return
 
     # QR Code
     link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
-    st.title(f"📊 {curr} - 決策看板")
+    st.markdown(f"<h1 style='text-align: center;'>📊 {curr} - 決策看板</h1>", unsafe_allow_html=True)
+    
     col_l, col_r = st.columns([1, 4])
     col_l.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
-    col_r.info(f"評分連結：{link}")
+    col_r.markdown(f"**手機評分連結：**<br><code style='font-size: 20px;'>{link}</code>", unsafe_allow_html=True)
 
     st.divider()
 
@@ -134,37 +135,45 @@ def render_dashboard_page():
         df = pd.read_csv(FILE_NAME)
         df_p = df[df["Project"] == curr]
         if not df_p.empty:
-            # 關鍵：每人最新一筆
             df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             avg = df_c["Total Score"].mean()
 
-            # 1. 核心指標
+            # 1. 核心指標 (放大字體)
             m1, m2, m3 = st.columns(3)
+            # 使用自定義 HTML 放大 Metric 字體
+            st.markdown("""
+                <style>
+                [data-testid="stMetricValue"] { font-size: 60px !important; }
+                [data-testid="stMetricLabel"] { font-size: 24px !important; }
+                </style>
+                """, unsafe_allow_html=True)
+            
             m1.metric("已投人數", f"{len(df_c)} 人")
-            m2.metric("綜合平均分", f"{avg:.1f}")
+            m2.metric("平均總分", f"{avg:.1f}")
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "green" if avg >= 75 else "orange" if avg >= 60 else "red"
-            m3.markdown(f"**目前決策：**\n# :{clr}[{res}]")
+            m3.markdown(f"<p style='font-size: 24px; font-weight: bold; margin-bottom: 0;'>目前決策：</p><h1 style='color:{clr}; font-size: 70px; margin-top: 0;'>{res}</h1>", unsafe_allow_html=True)
 
             st.divider()
             
-            # 2. 圖表區：圓餅圖(分布) 與 長條圖(細項) 並列
+            # 2. 圖表區：圓餅圖 與 長條圖 (加大字體)
             c_left, c_right = st.columns([2, 3])
             
             with c_left:
-                st.subheader("🗳️ 投票結果分布")
+                st.markdown("### 🗳️ 投票結果分布")
                 df_c["Status"] = df_c["Total Score"].apply(lambda s: "推薦引進" if s >= 75 else "修正後推薦" if s >= 60 else "不推薦")
                 st_counts = df_c["Status"].value_counts().reset_index()
                 st_counts.columns = ["類別", "票數"]
-                pie = alt.Chart(st_counts).mark_arc(outerRadius=100).encode(
+                pie = alt.Chart(st_counts).mark_arc(outerRadius=120).encode(
                     theta="票數", 
-                    color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#4CAF50", "#FF9800", "#F44336"])),
+                    color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#4CAF50", "#FF9800", "#F44336"]),
+                                   legend=alt.Legend(labelFontSize=18, titleFontSize=20)),
                     tooltip=["類別", "票數"]
-                ).properties(height=350)
+                ).properties(height=450)
                 st.altair_chart(pie, use_container_width=True)
 
             with c_right:
-                st.subheader("📈 各指標達成率 (%)")
+                st.markdown("### 📈 各指標達成率 (%)")
                 items = []
                 for cat, crits in RUBRIC.items():
                     for name, w in crits:
@@ -172,30 +181,36 @@ def render_dashboard_page():
                             items.append({"指標項目": name, "達成率 (%)": round((df_c[name].mean()/w)*100, 1), "分類": cat.split(" ")[0]})
                 
                 bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
-                    x=alt.X("達成率 (%)", scale=alt.Scale(domain=[0, 100])), 
-                    y=alt.Y("指標項目", sort=None, axis=alt.Axis(labelLimit=400)), 
-                    color="分類",
+                    x=alt.X("達成率 (%)", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=16, titleFontSize=18)), 
+                    y=alt.Y("指標項目", sort=None, axis=alt.Axis(labelLimit=500, labelFontSize=18, titleFontSize=20)), 
+                    color=alt.Color("分類", legend=alt.Legend(labelFontSize=16, titleFontSize=18)),
                     tooltip=["指標項目", "達成率 (%)"]
-                ).properties(height=350)
-                st.altair_chart(bar + bar.mark_text(align='left', dx=5).encode(text='達成率 (%):Q'), use_container_width=True)
+                ).properties(height=450)
+                
+                text = bar.mark_text(align='left', dx=5, fontSize=18, fontWeight='bold').encode(text='達成率 (%):Q')
+                st.altair_chart(bar + text, use_container_width=True)
 
-            # 3. 匿名意見回饋 (核心需求：不顯示名字)
+            # 3. 匿名意見回饋 (放大並美化)
             st.divider()
-            st.subheader("💬 評審匿名意見與建議")
-            # 過濾掉空白建議
+            st.markdown("<h2 style='color: #4B0082;'>💬 評審匿名意見與建議</h2>", unsafe_allow_html=True)
             feedback_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
             
             if feedback_list:
                 for i, msg in enumerate(feedback_list, 1):
-                    # 使用匿名編號取代人名
-                    st.info(f"**建議 {i}：** {msg}")
+                    # 加大意見字體到 24px
+                    st.markdown(f"""
+                        <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 10px solid #4B0082;">
+                            <span style="font-size: 20px; color: #555;">建議 {i}：</span><br>
+                            <span style="font-size: 28px; font-weight: 500;">{msg}</span>
+                        </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.caption("尚未有意見回饋。")
 
-            # 4. 下載明細
-            with st.expander("📂 查看數據明細與下載"):
+            # 4. 下載明細 (縮小放在最後)
+            with st.expander("📂 數據明細與下載"):
                 st.dataframe(df_c)
-                st.download_button("📥 下載最終採計結果", df_c.to_csv(index=False).encode('utf-8-sig'), f'{curr}_final.csv')
+                st.download_button("📥 下載採計結果", df_c.to_csv(index=False).encode('utf-8-sig'), f'{curr}_final.csv')
 
     if auto: time.sleep(5); st.rerun()
 
