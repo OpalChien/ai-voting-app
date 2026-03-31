@@ -14,7 +14,7 @@ RUBRIC_DETAILS = {
     "1. 模型準確度與臨床一致性": "評核 AUC/感度/特異性是否達標。方式：查驗臨床驗證報告與 TFDA 許可證。",
     "2. 異常值偵測與風險警示": "辨識無法判讀影像之能力。方式：測試高風險病灶之即時通報機制。",
     "3. 病患安全防護機制": "防止過度診斷。方式：確認具備『醫師覆核』流程，而非 AI 自動發報。",
-    "5. 院內系統整合度": "支援 DICOM/HL7。方式：觀察與 PACS/HIS 介接流暢度 (建議 < 5秒)。",
+    "5. 院內系統整合度": "支援 DICOM/HL7指標。方式：觀察與 PACS/HIS 介接流暢度 (建議 < 5秒)。",
     "6. 資安合規性": "數據傳輸加密。方式：查驗 ISO 27001 認證或資安漏洞掃描報告。",
     "7. 系統維運與更新機制": "系統穩定性。方式：確認當機備援方案 (DR) 及廠商 SLA 支援能力。",
     "9. 可解釋性與透明度": "非黑箱 AI。方式：確認是否提供 Heatmap (熱區圖) 或信心度評分。",
@@ -62,12 +62,17 @@ def get_existing_projects():
 # --- 4. 頁面渲染 ---
 
 def render_voting_page():
-    """ 投票端：保持 Slider 與 姓名覆蓋邏輯 """
-    project_name = st.query_params.get("project", st.text_input("專案名稱："))
-    if not project_name: st.stop()
+    """ 投票端：保留所有邏輯與權重說明 """
+    try:
+        project_name = st.query_params.get("project", None)
+    except: project_name = None
 
-    st.markdown(f"### 📝 評估：**{project_name}**")
-    voter_name = st.text_input("您的姓名 (評審)", key="v_name")
+    if not project_name:
+        project_name = st.text_input("請輸入專案名稱：")
+        if not project_name: st.stop()
+
+    st.markdown(f"### 📝 正在評估：**{project_name}**")
+    voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名僅供後台存檔，看板將匿名顯示")
 
     user_scores = {}
     total = 0
@@ -81,20 +86,19 @@ def render_voting_page():
 
     st.divider()
     c = "green" if total >= 75 else "orange" if total >= 60 else "red"
-    st.markdown(f"### 總分：<span style='color:{c}; font-size:40px;'>{total:.1f}</span>", unsafe_allow_html=True)
+    st.markdown(f"### 總分計：<span style='color:{c}; font-size:40px;'>{total:.1f}</span>", unsafe_allow_html=True)
     
-    fb = st.text_area("💬 意見回饋")
-    if st.button("🚀 提交評分", use_container_width=True, type="primary"):
-        if not voter_name: st.error("請輸入姓名"); return
+    fb = st.text_area("💬 建議與回饋 (將匿名顯示在看板上)")
+    if st.button("🚀 確認提交", use_container_width=True, type="primary"):
+        if not voter_name: st.error("請輸入姓名以完成存檔"); return
         rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
         rec.update(user_scores)
         df = pd.DataFrame([rec])
         df.to_csv(FILE_NAME, mode='a', index=False, header=not os.path.exists(FILE_NAME))
-        st.success("提交成功！"); st.balloons(); time.sleep(2); st.rerun()
+        st.success("提交成功！"); st.balloons(); time.sleep(1); st.rerun()
 
 def render_dashboard_page():
-    """ 看板端：找回圓餅圖，保留所有管理功能 """
-    # Session State
+    """ 看板端：隱藏姓名、恢復圓餅圖、新增匿名意見與達成率圖 """
     if "current_project" not in st.session_state: st.session_state["current_project"] = None
 
     with st.sidebar:
@@ -110,75 +114,88 @@ def render_dashboard_page():
                 st.session_state["current_project"] = new_p; st.rerun()
         
         auto = st.toggle("🔄 自動刷新 (Live)", value=True)
-        if st.button("🗑️ 清空數據"):
+        if st.button("🗑️ 清空所有數據"):
             if os.path.exists(FILE_NAME): os.remove(FILE_NAME)
             st.rerun()
 
     curr = st.session_state["current_project"]
-    if not curr: st.info("請選擇專案"); return
+    if not curr: st.info("👋 請在左側選擇或新增一個評估專案。"); return
 
     # QR Code
     link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
-    st.title(f"📊 {curr} - 決議看板")
+    st.title(f"📊 {curr} - 決策看板")
     col_l, col_r = st.columns([1, 4])
     col_l.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
     col_r.info(f"評分連結：{link}")
+
+    st.divider()
 
     if os.path.exists(FILE_NAME):
         df = pd.read_csv(FILE_NAME)
         df_p = df[df["Project"] == curr]
         if not df_p.empty:
+            # 關鍵：每人最新一筆
             df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
             avg = df_c["Total Score"].mean()
 
-            # 頂部數據
+            # 1. 核心指標
             m1, m2, m3 = st.columns(3)
             m1.metric("已投人數", f"{len(df_c)} 人")
-            m2.metric("平均總分", f"{avg:.1f}")
+            m2.metric("綜合平均分", f"{avg:.1f}")
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "green" if avg >= 75 else "orange" if avg >= 60 else "red"
-            m3.markdown(f"決策：# :{clr}[{res}]")
+            m3.markdown(f"**目前決策：**\n# :{clr}[{res}]")
 
             st.divider()
             
-            # 圖表區：圓餅圖與長條圖並列
-            col_pie, col_bar = st.columns([2, 3])
+            # 2. 圖表區：圓餅圖(分布) 與 長條圖(細項) 並列
+            c_left, c_right = st.columns([2, 3])
             
-            with col_pie:
-                st.subheader("🗳️ 投票分布")
+            with c_left:
+                st.subheader("🗳️ 投票結果分布")
                 df_c["Status"] = df_c["Total Score"].apply(lambda s: "推薦引進" if s >= 75 else "修正後推薦" if s >= 60 else "不推薦")
                 st_counts = df_c["Status"].value_counts().reset_index()
                 st_counts.columns = ["類別", "票數"]
                 pie = alt.Chart(st_counts).mark_arc(outerRadius=100).encode(
-                    theta="票數", color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#4CAF50", "#FF9800", "#F44336"]))
+                    theta="票數", 
+                    color=alt.Color("類別", scale=alt.Scale(domain=["推薦引進", "修正後推薦", "不推薦"], range=["#4CAF50", "#FF9800", "#F44336"])),
+                    tooltip=["類別", "票數"]
                 ).properties(height=350)
                 st.altair_chart(pie, use_container_width=True)
 
-            with col_bar:
-                st.subheader("📈 細項達成率 (%)")
+            with c_right:
+                st.subheader("📈 各指標達成率 (%)")
                 items = []
                 for cat, crits in RUBRIC.items():
                     for name, w in crits:
                         if name in df_c.columns:
-                            items.append({"項": name, "率": round((df_c[name].mean()/w)*100, 1), "類": cat.split(" ")[0]})
+                            items.append({"指標項目": name, "達成率 (%)": round((df_c[name].mean()/w)*100, 1), "分類": cat.split(" ")[0]})
+                
                 bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
-                    x=alt.X("率", scale=alt.Scale(domain=[0, 100])), y=alt.Y("項", sort=None), color="類"
+                    x=alt.X("達成率 (%)", scale=alt.Scale(domain=[0, 100])), 
+                    y=alt.Y("指標項目", sort=None, axis=alt.Axis(labelLimit=400)), 
+                    color="分類",
+                    tooltip=["指標項目", "達成率 (%)"]
                 ).properties(height=350)
-                st.altair_chart(bar + bar.mark_text(align='left', dx=5).encode(text='率:Q'), use_container_width=True)
+                st.altair_chart(bar + bar.mark_text(align='left', dx=5).encode(text='達成率 (%):Q'), use_container_width=True)
 
-            # --- 新功能：評審意見清單 ---
+            # 3. 匿名意見回饋 (核心需求：不顯示名字)
             st.divider()
-            st.subheader("💬 評審意見與建議")
-            feedback_df = df_c[df_c["Feedback"].notna()][["Voter", "Feedback"]]
-            if not feedback_df.empty:
-                for idx, row in feedback_df.iterrows():
-                    st.markdown(f"**{row['Voter']}**：{row['Feedback']}")
+            st.subheader("💬 評審匿名意見與建議")
+            # 過濾掉空白建議
+            feedback_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
+            
+            if feedback_list:
+                for i, msg in enumerate(feedback_list, 1):
+                    # 使用匿名編號取代人名
+                    st.info(f"**建議 {i}：** {msg}")
             else:
-                st.caption("目前尚無意見回饋。")
+                st.caption("尚未有意見回饋。")
 
-            with st.expander("📂 下載與明細"):
+            # 4. 下載明細
+            with st.expander("📂 查看數據明細與下載"):
                 st.dataframe(df_c)
-                st.download_button("📥 下載 (UTF-8-SIG)", df_c.to_csv(index=False).encode('utf-8-sig'), f'{curr}.csv')
+                st.download_button("📥 下載最終採計結果", df_c.to_csv(index=False).encode('utf-8-sig'), f'{curr}_final.csv')
 
     if auto: time.sleep(5); st.rerun()
 
