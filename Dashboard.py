@@ -9,7 +9,7 @@ import urllib.parse
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="新光醫院 AI 軟體評定", layout="wide")
 
-# --- 2. 完整 16 條指標內容與權重 (保持不變) ---
+# --- 2. 完整 16 條內容與權重 ---
 RUBRIC_CONTENT = {
     "1. 模型準確度與臨床一致性": "評核 AUC/感度/特異性是否達標。方式：查驗臨床驗證報告與 TFDA 許可證。",
     "2. 異常值偵測與風險警示": "辨識無法判讀影像之能力。方式：測試高風險病灶之即時通報機制。",
@@ -69,19 +69,15 @@ def get_existing_projects():
 # --- 4. 頁面渲染 ---
 
 def render_voting_page():
-    # ✅ 修正：使用最新的 st.query_params 讀取方式
     project_from_url = st.query_params.get("project", "")
-    
-    # 如果 URL 沒帶專案名稱，才顯示輸入框
     if not project_from_url:
         project_name = st.text_input("請手動輸入專案名稱：")
     else:
         project_name = project_from_url
-        st.markdown(f"## 📝 正在評估專案：**{project_name}**")
+        st.markdown(f"## 📝 正在評估：{project_name}")
 
     if not project_name: st.stop()
-
-    voter_name = st.text_input("您的姓名 (評審)", placeholder="姓名僅供存檔核對")
+    voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名看板匿名顯示")
 
     user_scores = {}
     total = 0
@@ -95,16 +91,16 @@ def render_voting_page():
 
     st.divider()
     c = "green" if total >= 75 else "orange" if total >= 60 else "red"
-    st.markdown(f"<h2 style='text-align:center;'>目前總計分數：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align:center;'>目前評分：<span style='color:{c}; font-size:60px;'>{total:.1f}</span></h2>", unsafe_allow_html=True)
     
-    fb = st.text_area("💬 匿名建議回饋")
-    if st.button("🚀 確認提交評分", use_container_width=True, type="primary"):
+    fb = st.text_area("💬 匿名建議 (將顯示於看板)")
+    if st.button("🚀 確認提交", use_container_width=True, type="primary"):
         if not voter_name: st.error("請輸入姓名"); return
         ensure_csv()
         rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
         rec.update(user_scores)
         pd.DataFrame([rec]).to_csv(FILE_NAME, mode='a', index=False, header=False)
-        st.success("提交成功！已紀錄您的評分。"); st.balloons(); time.sleep(1); st.rerun()
+        st.success("提交成功！"); st.balloons(); time.sleep(1); st.rerun()
 
 def render_dashboard_page():
     if "current_project" not in st.session_state: st.session_state["current_project"] = None
@@ -125,7 +121,7 @@ def render_dashboard_page():
         projs = get_existing_projects()
         if projs:
             idx = projs.index(st.session_state["current_project"]) if st.session_state["current_project"] in projs else 0
-            sel = st.selectbox("🎯 切換專案：", projs, index=idx)
+            sel = st.selectbox("🎯 目前查看：", projs, index=idx)
             st.session_state["current_project"] = sel
         
         auto = st.toggle("🔄 自動刷新 (Live)", value=True)
@@ -136,21 +132,21 @@ def render_dashboard_page():
     curr = st.session_state["current_project"]
     if not curr: st.info("👋 請在左側新增或切換專案。"); return
 
-    # ✅ 修正：確保連結字體夠大且 QR Code 正常
-    link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
     st.markdown(f"<h1 style='text-align: center;'>📊 {curr} - 決策看板</h1>", unsafe_allow_html=True)
     
-    col_l, col_r = st.columns([1, 4])
-    with col_l:
+    # QR Code & 網址 (加大字體)
+    link = f"https://shinkong-ai-vote.streamlit.app/?page=vote&project={urllib.parse.quote(curr)}"
+    col_qr, col_lnk = st.columns([1, 4])
+    with col_qr:
         st.image(f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link)}")
-    with col_r:
-        st.markdown(f"<div style='background-color:#f0f2f6; padding:15px; border-radius:10px;'><strong>手機評分網址 (字體已加大)：</strong><br><a href='{link}' style='font-size:24px; color:#1E90FF; word-break:break-all;'>{link}</a></div>", unsafe_allow_html=True)
+    with col_lnk:
+        st.markdown(f"<div style='background-color:#f0f2f6; padding:15px; border-radius:10px;'><strong>手機評分網址：</strong><br><a href='{link}' style='font-size:24px; color:#1E90FF; word-break:break-all;'>{link}</a></div>", unsafe_allow_html=True)
 
     st.divider()
 
     if os.path.exists(FILE_NAME):
-        df = pd.read_csv(FILE_NAME)
-        df_p = df[(df["Project"] == curr) & (df["Voter"] != "SYSTEM_INIT")]
+        df_all = pd.read_csv(FILE_NAME)
+        df_p = df_all[(df_all["Project"] == curr) & (df_all["Voter"] != "SYSTEM_INIT")]
         
         if not df_p.empty:
             df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
@@ -158,7 +154,7 @@ def render_dashboard_page():
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545"
 
-            # 頂部數據 (大字體)
+            # 1. 頂部數據 (大字體)
             m1, m2, m3 = st.columns(3)
             def box(l, v): return f"<div style='text-align:center;'><p style='font-size:28px; color:#555;'>{l}</p><p style='font-size:85px; font-weight:bold; color:{clr}; margin-top:-20px;'>{v}</p></div>"
             m1.markdown(box("已投人數", len(df_c)), unsafe_allow_html=True)
@@ -167,10 +163,10 @@ def render_dashboard_page():
 
             st.divider()
             
-            # ✅ 修正：確保圓餅圖與長條圖並行顯示
+            # 2. 圖表並排：圓餅圖 與 16 項達成率
             c_pie, c_bar = st.columns([2, 3])
             with c_pie:
-                st.markdown("### 🗳️ 投票分布")
+                st.markdown("### 🗳️ 投票分佈")
                 df_c["Status"] = df_c["Total Score"].apply(lambda s: "推薦引進" if s >= 75 else "修正後推薦" if s >= 60 else "不推薦")
                 st_counts = df_c["Status"].value_counts().reset_index()
                 st_counts.columns = ["類別", "票數"]
@@ -187,12 +183,36 @@ def render_dashboard_page():
                         v = df_c[n].mean() if n in df_c.columns else 0
                         items.append({"項": n, "率": round((v/w)*100, 1), "類": cat.split(" ")[0]})
                 bar = alt.Chart(pd.DataFrame(items)).mark_bar().encode(
-                    x=alt.X("率", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=16)), 
-                    y=alt.Y("項", sort=None, axis=alt.Axis(labelFontSize=16, labelLimit=400)), color="類"
+                    x=alt.X("率", scale=alt.Scale(domain=[0, 100])), y=alt.Y("項", sort=None, axis=alt.Axis(labelLimit=400, labelFontSize=16)), color="類"
                 ).properties(height=500)
                 st.altair_chart(bar + bar.mark_text(align='left', dx=5, fontSize=16, fontWeight='bold').encode(text='率:Q'), use_container_width=True)
-        else:
-            st.warning("⚠️ 該專案目前尚無正式評分數據，請掃描 QR Code 開始。")
+
+            # 3. 匿名意見 (大字體)
+            st.divider()
+            st.markdown("<h2 style='color: #4B0082;'>💬 評審匿名意見回饋</h2>", unsafe_allow_html=True)
+            fb_list = df_c[df_c["Feedback"].notna() & (df_c["Feedback"] != "")]["Feedback"].tolist()
+            if fb_list:
+                for i, msg in enumerate(fb_list, 1):
+                    st.markdown(f"""<div style="background-color:#f0f2f6;padding:25px;border-radius:10px;margin-bottom:15px;border-left:10px solid #4B0082;"><span style="font-size:30px;font-weight:500;">{msg}</span></div>""", unsafe_allow_html=True)
+            else: st.caption("尚未有意見回饋。")
+
+        # ✅ 4. 1-16 項指標評選準則 (放在數據判斷外面，確保不管有沒有人投都顯示)
+        st.divider()
+        st.markdown("<h2 style='color: #1E90FF;'>📋 1-16 項評核指標定義與權重分配</h2>", unsafe_allow_html=True)
+        gl, gr = st.columns(2)
+        full_guide = []
+        for cat, crits in RUBRIC.items():
+            for name, w in crits: full_guide.append((name, w, RUBRIC_CONTENT[name]))
+        def show_g(items, col):
+            for n, w, c in items:
+                col.markdown(f'<div style="background-color:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:10px;border-left:5px solid #1E90FF;"><span style="font-size:20px;font-weight:bold;color:#333;">{n} <span style="color:#ff4b4b;">({w}分)</span></span><br><span style="font-size:18px;color:#666;">{c}</span></div>', unsafe_allow_html=True)
+        show_g(full_guide[:8], gl); show_g(full_guide[8:], gr)
+
+        # ✅ 5. 評審投票歷程 (Log)
+        st.divider()
+        with st.expander("🕒 完整投票歷程 (History Log)", expanded=False):
+            st.dataframe(df_p.sort_values("Timestamp", ascending=False), use_container_width=True)
+            st.download_button("📥 下載 Excel 原始數據", df_p.to_csv(index=False).encode('utf-8-sig'), f'{curr}_history.csv')
 
     if auto: time.sleep(5); st.rerun()
 
