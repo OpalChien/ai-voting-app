@@ -102,6 +102,22 @@ def get_existing_projects():
         return sorted([str(p) for p in df["Project"].dropna().unique().tolist() if str(p) != "SYSTEM_INIT"])
     except: return []
 
+def get_project_type(project_name):
+    ensure_csv()
+    try:
+        df = pd.read_csv(FILE_NAME)
+        if VOTER_TYPE_COL not in df.columns:
+            return UNKNOWN_VOTER_TYPE
+        project_rows = df[df["Project"] == project_name]
+        init_rows = project_rows[project_rows["Voter"] == "SYSTEM_INIT"]
+        source = init_rows if not init_rows.empty else project_rows
+        values = source[VOTER_TYPE_COL].dropna().astype(str).replace("", UNKNOWN_VOTER_TYPE)
+        if values.empty:
+            return UNKNOWN_VOTER_TYPE
+        return values.iloc[0]
+    except Exception:
+        return UNKNOWN_VOTER_TYPE
+
 # --- 4. 頁面渲染：評審投票端 (手機版) ---
 def render_voting_page():
     # 自動抓取網址中的專案名稱
@@ -118,7 +134,8 @@ def render_voting_page():
         st.stop()
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名僅供內部核對")
-    voter_type = st.radio("評審來源", VOTER_TYPES, horizontal=True)
+    project_type = get_project_type(project_name)
+    st.caption(f"專案類別：{project_type}")
 
     user_scores = {}
     total = 0
@@ -141,7 +158,7 @@ def render_voting_page():
             st.error("❌ 請輸入姓名以供系統核對。")
         else:
             ensure_csv()
-            rec = {"Project": project_name, "Voter": voter_name, VOTER_TYPE_COL: voter_type, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
+            rec = {"Project": project_name, "Voter": voter_name, VOTER_TYPE_COL: project_type, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
             rec.update(user_scores)
             append_record(rec)
             st.success("✅ 提交成功！感謝您的評分。")
@@ -159,10 +176,11 @@ def render_dashboard_page():
         st.header("🗂️ 專案管理")
         with st.form("new_proj", clear_on_submit=True):
             name = st.text_input("➕ 新增專案名稱")
+            project_type = st.selectbox("專案類別", VOTER_TYPES)
             if st.form_submit_button("建立"):
                 if name:
                     ensure_csv()
-                    dummy = {"Project": name, "Voter": "SYSTEM_INIT", VOTER_TYPE_COL: "SYSTEM", "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": 0}
+                    dummy = {"Project": name, "Voter": "SYSTEM_INIT", VOTER_TYPE_COL: project_type, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": 0}
                     append_record(dummy)
                     st.session_state["current_project"] = name
                     st.rerun()
