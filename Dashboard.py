@@ -49,16 +49,50 @@ RUBRIC = {
 }
 
 FILE_NAME = "vote_data_v2.csv"
+VOTER_TYPE_COL = "Voter Type"
+VOTER_TYPES = ["院內", "院外"]
+UNKNOWN_VOTER_TYPE = "未分類"
+
+def get_rubric_columns():
+    cols = []
+    for cat in RUBRIC:
+        for name, weight in RUBRIC[cat]:
+            cols.append(name)
+    return cols
+
+def get_csv_columns():
+    return ["Project", "Voter", VOTER_TYPE_COL, "Timestamp", "Total Score", "Feedback"] + get_rubric_columns()
+
+def append_record(record):
+    ensure_csv()
+    cols = pd.read_csv(FILE_NAME, nrows=0).columns.tolist()
+    pd.DataFrame([record]).reindex(columns=cols).to_csv(FILE_NAME, mode='a', index=False, header=False)
 
 # --- 3. 核心輔助函式 ---
 def ensure_csv():
     """ 確保 CSV 檔案存在且具備正確欄位 """
+    expected_cols = get_csv_columns()
     if not os.path.exists(FILE_NAME):
-        cols = ["Project", "Voter", "Timestamp", "Total Score", "Feedback"]
-        for cat in RUBRIC:
-            for name, weight in RUBRIC[cat]:
-                cols.append(name)
-        pd.DataFrame(columns=cols).to_csv(FILE_NAME, index=False)
+        pd.DataFrame(columns=expected_cols).to_csv(FILE_NAME, index=False)
+        return
+
+    df = pd.read_csv(FILE_NAME)
+    changed = False
+    if VOTER_TYPE_COL not in df.columns:
+        df[VOTER_TYPE_COL] = UNKNOWN_VOTER_TYPE
+        changed = True
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = ""
+            changed = True
+    extra_cols = [col for col in df.columns if col not in expected_cols]
+    ordered_cols = expected_cols + extra_cols
+    if df.columns.tolist() != ordered_cols:
+        df = df.reindex(columns=ordered_cols)
+        changed = True
+    if changed:
+        df[VOTER_TYPE_COL] = df[VOTER_TYPE_COL].fillna(UNKNOWN_VOTER_TYPE).replace("", UNKNOWN_VOTER_TYPE)
+        df.to_csv(FILE_NAME, index=False)
 
 def get_existing_projects():
     """ 取得所有已建立的專案名稱 """
@@ -84,6 +118,7 @@ def render_voting_page():
         st.stop()
 
     voter_name = st.text_input("您的姓名 (評審)", placeholder="此姓名僅供內部核對")
+    voter_type = st.radio("評審來源", VOTER_TYPES, horizontal=True)
 
     user_scores = {}
     total = 0
@@ -106,9 +141,9 @@ def render_voting_page():
             st.error("❌ 請輸入姓名以供系統核對。")
         else:
             ensure_csv()
-            rec = {"Project": project_name, "Voter": voter_name, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
+            rec = {"Project": project_name, "Voter": voter_name, VOTER_TYPE_COL: voter_type, "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": total, "Feedback": fb}
             rec.update(user_scores)
-            pd.DataFrame([rec]).to_csv(FILE_NAME, mode='a', index=False, header=False)
+            append_record(rec)
             st.success("✅ 提交成功！感謝您的評分。")
             st.balloons()
             time.sleep(1)
@@ -127,8 +162,8 @@ def render_dashboard_page():
             if st.form_submit_button("建立"):
                 if name:
                     ensure_csv()
-                    dummy = {"Project": name, "Voter": "SYSTEM_INIT", "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": 0}
-                    pd.DataFrame([dummy]).to_csv(FILE_NAME, mode='a', index=False, header=False)
+                    dummy = {"Project": name, "Voter": "SYSTEM_INIT", VOTER_TYPE_COL: "SYSTEM", "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Total Score": 0}
+                    append_record(dummy)
                     st.session_state["current_project"] = name
                     st.rerun()
 
@@ -174,7 +209,22 @@ def render_dashboard_page():
         df_p = df_all[(df_all["Project"] == curr) & (df_all["Voter"] != "SYSTEM_INIT")]
         
         if not df_p.empty:
-            df_c = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter"], keep="last")
+            df_p = df_p.copy()
+            if VOTER_TYPE_COL not in df_p.columns:
+                df_p[VOTER_TYPE_COL] = UNKNOWN_VOTER_TYPE
+            df_p[VOTER_TYPE_COL] = df_p[VOTER_TYPE_COL].fillna(UNKNOWN_VOTER_TYPE).replace("", UNKNOWN_VOTER_TYPE)
+
+            group_options = ["全部"] + [t for t in VOTER_TYPES if t in df_p[VOTER_TYPE_COL].unique().tolist()]
+            if UNKNOWN_VOTER_TYPE in df_p[VOTER_TYPE_COL].unique().tolist():
+                group_options.append(UNKNOWN_VOTER_TYPE)
+            selected_group = st.radio("統計範圍", group_options, horizontal=True)
+            df_view = df_p if selected_group == "全部" else df_p[df_p[VOTER_TYPE_COL] == selected_group]
+
+            if df_view.empty:
+                st.warning(f"目前沒有「{selected_group}」的投票資料。")
+                return
+
+            df_c = df_view.sort_values("Timestamp").drop_duplicates(subset=["Voter", VOTER_TYPE_COL], keep="last")
             avg = df_c["Total Score"].mean()
             res = "推薦引進" if avg >= 75 else "修正後推薦" if avg >= 60 else "不推薦"
             clr = "#28a745" if avg >= 75 else "#ffc107" if avg >= 60 else "#dc3545"
@@ -185,6 +235,15 @@ def render_dashboard_page():
             m1.markdown(box("已投人數", len(df_c)), unsafe_allow_html=True)
             m2.markdown(box("平均總分", f"{avg:.1f}"), unsafe_allow_html=True)
             m3.markdown(box("決策結論", res), unsafe_allow_html=True)
+
+            group_base = df_p.sort_values("Timestamp").drop_duplicates(subset=["Voter", VOTER_TYPE_COL], keep="last")
+            group_summary = group_base.groupby(VOTER_TYPE_COL, as_index=False).agg(
+                投票人數=("Voter", "count"),
+                平均分數=("Total Score", "mean"),
+            )
+            group_summary["平均分數"] = group_summary["平均分數"].round(1)
+            st.markdown("### 院內／院外統計")
+            st.dataframe(group_summary, use_container_width=True, hide_index=True)
 
             st.divider()
             
